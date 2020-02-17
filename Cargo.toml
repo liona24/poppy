@@ -1,0 +1,2 @@
+[workspace]
+members = ["poppy", "poppy-plays", "poppy-knows"]
