@@ -1,5 +1,5 @@
 {
-    "name": "poppy-development",
+    "name": "poppy-dev",
     "dockerFile": "Dockerfile",
     "runArgs": [
         "-u", "vscode",
