@@ -12,6 +12,7 @@ pub type ChipCount = u32;
 #[cfg(test)]
 mod mock;
 
+pub mod deck;
 pub mod actions;
 mod board;
 mod pot;

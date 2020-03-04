@@ -1,22 +1,50 @@
 use crate::actions::Action;
+use crate::deck::{DeckGenerator, DefaultDeckGenerator};
 use crate::player::Player;
 use crate::state::TransparentState;
 use crate::ChipCount;
 use itertools::{multipeek, Itertools};
-use rs_poker::core::{Card, Deck, FlatDeck};
+use rs_poker::core::{Card, FlatDeck};
 
-pub enum BlindPolicy {}
+pub enum BlindPolicy {
+    NeverIncrease,
+}
 
-pub struct Table<P> {
+pub struct Table<P, G: DeckGenerator = DefaultDeckGenerator> {
     players: Vec<P>,
     blind_policy: BlindPolicy,
     transparent_state: TransparentState,
     last_cards: Vec<[Card; 2]>,
+    deck_generator: G,
+}
+
+impl<P: Player> Table<P, DefaultDeckGenerator> {
+
+    /// Initialize a new table with the given players.
+    ///
+    /// Each player is assigned an initial stack of the given size.\
+    /// The game starts with the given blind size.\
+    /// In order to increase blind levels a `BlindPolicy` should be specified.
+    ///
+    /// The first dealer position will be the first player yielded by the iterator.
+    /// After that the players will be seated in order of appearence.
+    ///
+    /// The number of players has to be in the interval [2, 22]
+    ///
+    /// The method provides a shortcut for `Table::<P, DefaultDeckGenerator>::new`
+    pub fn create_default(
+        players: impl Iterator<Item = P>,
+        stack_size: ChipCount,
+        blind_size: ChipCount,
+        blind_policy: BlindPolicy,
+    ) -> Self {
+        Table::<P, DefaultDeckGenerator>::new(players, stack_size, blind_size, blind_policy)
+    }
 }
 
 // progress_hook: Option<Box<dyn Fn(&TransparentState)>>,
 
-impl<P: Player> Table<P> {
+impl<P: Player, G: DeckGenerator> Table<P, G> {
     /// Initialize a new table with the given players.
     ///
     /// Each player is assigned an initial stack of the given size.\
@@ -50,6 +78,7 @@ impl<P: Player> Table<P> {
             blind_policy,
             transparent_state: TransparentState::new(blind_size, 0, stack_sizes),
             last_cards,
+            deck_generator: G::default(),
         }
     }
 
@@ -59,8 +88,7 @@ impl<P: Player> Table<P> {
             small_blind: self.transparent_state.blind_size,
             big_blind: self.transparent_state.blind_size * 2,
         }];
-        let mut deck: FlatDeck = Deck::default().into();
-        deck.shuffle();
+        let mut deck: FlatDeck = self.deck_generator.shuffled_deck();
 
         for &i in self.transparent_state.player_positions.iter() {
             let c1 = deck.deal().unwrap();
