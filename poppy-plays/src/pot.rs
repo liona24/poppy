@@ -40,10 +40,11 @@ impl Pot {
     /// Note that in this case a simple bet is also considered a "raise".
     pub(crate) fn place_chips(&mut self, player_position: usize, amount: ChipCount) -> bool {
         self.player_bets[player_position] += amount;
-        let diff = self.player_bets[player_position] - self.total_bet_size();
+        // the diff may be negative if we are facing an all-in situation
+        let diff = self.player_bets[player_position] as i64 - self.total_bet_size() as i64;
         if diff > 0 {
             // Raise
-            self.bet_size_round += diff;
+            self.bet_size_round += diff as ChipCount;
             true
         } else {
             // diff == 0
@@ -76,12 +77,14 @@ impl Pot {
         }
 
         let player_which_receives_rest = player_positions.first().copied();
-        let player_positions = player_positions.iter().sorted_by_key(|&&pos| self.player_bets[pos]);
+        let player_positions = player_positions
+            .iter()
+            .sorted_by_key(|&&pos| self.player_bets[pos]);
 
         let mut n_receivers = player_positions.len() as u32;
         let mut pot_size = 0;
 
-        let mut stacks = vec![0; player_positions.len()];
+        let mut stacks = vec![0; self.player_bets.len()];
 
         for &pos in player_positions {
             let shared_size = self.player_bets[pos];
@@ -126,7 +129,7 @@ impl Pot {
             .iter()
             .map(|x| std::cmp::min(eff_bet_size, *x))
             .sum::<u32>()
-            + self.total_bet_size()
+            + bet_size
     }
 
     /// Calculates the number of chips the player at the given position is required to bet to stay in the pot.
@@ -152,14 +155,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn place_chips() {
+    fn test_place_chips() {
         let mut pot = Pot::new(3);
         assert!(pot.place_chips(0, 10));
         assert!(!pot.place_chips(1, 10));
     }
 
     #[test]
-    fn total_size() {
+    fn test_total_size() {
         let mut pot = Pot::new(3);
         pot.place_chips(0, 10);
         pot.place_chips(1, 10);
@@ -169,7 +172,7 @@ mod tests {
     }
 
     #[test]
-    fn required_bet_size() {
+    fn test_required_bet_size() {
         let mut pot = Pot::new(2);
         pot.place_chips(1, 5);
         pot.place_chips(0, 10);
@@ -179,18 +182,18 @@ mod tests {
     }
 
     #[test]
-    fn bet_size() {
+    fn test_bet_size_round() {
         let mut pot = Pot::new(3);
         pot.place_chips(0, 10);
         pot.place_chips(1, 5);
 
-        assert_eq!(pot.total_bet_size(), 10);
+        assert_eq!(pot.bet_size_round(), 10);
         pot.place_chips(1, 10);
-        assert_eq!(pot.total_bet_size(), 15);
+        assert_eq!(pot.bet_size_round(), 15);
     }
 
     #[test]
-    fn effective_size() {
+    fn test_effective_size() {
         let mut pot = Pot::new(3);
         pot.place_chips(0, 10);
         pot.place_chips(1, 5);
@@ -202,7 +205,7 @@ mod tests {
     }
 
     #[test]
-    fn reset() {
+    fn test_reset() {
         let mut pot = Pot::new(3);
         pot.place_chips(0, 10);
         pot.place_chips(1, 5);
@@ -214,7 +217,7 @@ mod tests {
     }
 
     #[test]
-    fn distribute_one_player_split_pot() {
+    fn test_distribute_one_player_split_pot() {
         let mut pot = Pot::new(3);
         pot.place_chips(0, 10);
         pot.place_chips(1, 5);
@@ -225,7 +228,7 @@ mod tests {
     }
 
     #[test]
-    fn distribute_one_player_full_pot() {
+    fn test_distribute_one_player_full_pot() {
         let mut pot = Pot::new(3);
         pot.place_chips(0, 15);
         pot.place_chips(1, 15);
@@ -236,7 +239,7 @@ mod tests {
     }
 
     #[test]
-    fn distribute_multiple_players_full_pot() {
+    fn test_distribute_multiple_players_full_pot() {
         let mut pot = Pot::new(3);
         pot.place_chips(0, 15);
         pot.place_chips(1, 15);
@@ -247,7 +250,7 @@ mod tests {
     }
 
     #[test]
-    fn distribute_multiple_split_pot() {
+    fn test_distribute_multiple_split_pot() {
         let mut pot = Pot::new(3);
         pot.place_chips(0, 15);
         pot.place_chips(1, 15);
@@ -258,7 +261,7 @@ mod tests {
     }
 
     #[test]
-    fn distribute_chain() {
+    fn test_distribute_chain() {
         let mut pot = Pot::new(3);
         pot.place_chips(0, 15);
         pot.place_chips(1, 15);
