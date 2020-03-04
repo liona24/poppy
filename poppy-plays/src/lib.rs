@@ -9,6 +9,9 @@
 /// is this `ChipCount`
 pub type ChipCount = u32;
 
+#[cfg(test)]
+mod mock;
+
 pub mod actions;
 mod board;
 mod pot;

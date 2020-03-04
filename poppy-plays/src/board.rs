@@ -36,7 +36,7 @@ impl Board {
             None
         }
     }
-    pub fn cards(&self) -> &[Card] {
+    pub fn all_cards(&self) -> &[Card] {
         &self.cards[..self.n]
     }
 

@@ -15,7 +15,7 @@ use rs_poker::core::Card;
 ///
 /// Usually the first argument corresponds to position the player who has caused the action (or who can be associated with this action) resides.
 ///
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Action {
     /// Indicates the start of the round.
     StartRound {
@@ -65,7 +65,7 @@ pub enum Action {
 ///
 /// For some actions `ChipCounts` are associated. Depending on context they
 /// usually represent the minimum number of chips required to perform that action.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum PlayerAction {
     /// Indicates that the player has to pay a blind of the given size.
     ///
@@ -82,6 +82,12 @@ pub enum PlayerAction {
     /// The given chip count may be increased.\
     /// If it is greater or equal to the causing player's stack it will be
     /// auto-converted into an `AllIn(stack_size)`
+    ///
+    /// Note that this corresponds to the number of chips placed. It should not
+    /// be confused with the actual "size of the raise", i.e. if a player did
+    /// not call a bet yet, the given chip count represents the total number of
+    /// chips to put into the pot, rather than the difference between the last
+    /// bet and the desired bet to make.
     Raise(ChipCount),
     /// Indicates that the player may push all-in.
     ///
