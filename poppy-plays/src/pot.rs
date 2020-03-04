@@ -13,6 +13,7 @@ pub struct Pot {
     player_bets: Vec<ChipCount>,
     bet_size: ChipCount,
     bet_size_round: ChipCount,
+    last_raise_amount: ChipCount,
 }
 
 impl Pot {
@@ -22,6 +23,7 @@ impl Pot {
             player_bets: vec![0; num_players],
             bet_size: 0,
             bet_size_round: 0,
+            last_raise_amount: 0,
         }
     }
 
@@ -32,6 +34,7 @@ impl Pot {
         }
         self.bet_size = 0;
         self.bet_size_round = 0;
+        self.last_raise_amount = 0;
     }
 
     /// Place the given amount of chips from player located at `player_position` into the pot.
@@ -44,6 +47,7 @@ impl Pot {
         let diff = self.player_bets[player_position] as i64 - self.total_bet_size() as i64;
         if diff > 0 {
             // Raise
+            self.last_raise_amount = diff as ChipCount;
             self.bet_size_round += diff as ChipCount;
             true
         } else {
@@ -55,6 +59,7 @@ impl Pot {
     pub(crate) fn end_bet_round(&mut self) {
         self.bet_size += self.bet_size_round;
         self.bet_size_round = 0;
+        self.last_raise_amount = 0;
     }
 
     /// Distributes the pot between the players located at `player_positions`.
@@ -103,6 +108,10 @@ impl Pot {
         }
 
         stacks
+    }
+
+    pub(crate) fn last_raise_amount(&self) -> ChipCount {
+        self.last_raise_amount
     }
 
     /// Calculate the total number of chips contained in the pot
@@ -274,5 +283,17 @@ mod tests {
             .map(|(x, y)| x + y)
             .collect();
         assert_eq!(stacks, [0, 8, 33]);
+    }
+
+    #[test]
+    fn test_last_raise_amount() {
+        let mut pot = Pot::new(3);
+        assert_eq!(pot.last_raise_amount(), 0);
+        pot.place_chips(0, 5);
+        assert_eq!(pot.last_raise_amount(), 5);
+        pot.place_chips(1, 11);
+        assert_eq!(pot.last_raise_amount(), 6);
+        pot.place_chips(2, 11);
+        assert_eq!(pot.last_raise_amount(), 6);
     }
 }

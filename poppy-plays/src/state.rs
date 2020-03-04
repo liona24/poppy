@@ -148,24 +148,33 @@ impl TransparentState {
     /// Returns `true` if only one player is left after this bet round (i.e. the round is finished).
     fn bet_round<P: Player>(
         &mut self,
-        index_of_starting_position: usize,
+        mut index_of_starting_position: usize,
         players: &mut Vec<P>,
     ) -> bool {
         let mut i = index_of_starting_position;
-        let mut last_raiser = self.player_positions[i];
+        let mut last_raiser = None;
         loop {
             let pos = self.player_positions[i];
             if self.player_action(pos, &mut players[pos]) {
-                last_raiser = pos;
+                last_raiser = Some(pos);
             }
             if let Some(&Action::Fold(_)) = self.actions.last() {
                 self.player_positions.remove(i);
+                if self.player_positions.len() == 1 {
+                    return true;
+                }
+                if last_raiser.is_none() && i == index_of_starting_position {
+                    // this is the special case when pre-flop players only eitherfold or call to the big-blind
+                    i %= self.player_positions.len();
+                    index_of_starting_position = i;
+                    continue;
+                }
             } else {
                 i += 1;
             }
 
             i %= self.player_positions.len();
-            if self.player_positions[i] == last_raiser {
+            if Some(self.player_positions[i]) == last_raiser || (last_raiser.is_none() && i == index_of_starting_position) {
                 break;
             }
         }
@@ -179,9 +188,13 @@ impl TransparentState {
     ///
     /// This function returns `true` if the action taken can be considered a raise (i.e. Bet, Raise, AllIn which raised)
     fn player_action(&mut self, position: usize, player: &mut impl Player) -> bool {
-        let req_bet = self.pot.required_bet_size(position);
-        let min_bet = std::cmp::max(self.pot.bet_size_round() * 2, self.blind_size * 2);
         let stack = self.player_stacks[position];
+        if stack == 0 {
+            return false;
+        }
+
+        let req_bet = self.pot.required_bet_size(position);
+        let min_raise = std::cmp::max(self.pot.last_raise_amount(), self.blind_size * 2) + req_bet;
 
         let mut possible_actions = vec![PlayerAction::AllIn(stack)];
 
@@ -194,11 +207,11 @@ impl TransparentState {
             }
         }
 
-        if min_bet < stack {
-            if self.pot.bet_size_round() == 0 {
-                possible_actions.push(PlayerAction::Bet(min_bet));
+        if min_raise < stack {
+            if req_bet == 0 {
+                possible_actions.push(PlayerAction::Bet(min_raise));
             } else {
-                possible_actions.push(PlayerAction::Raise(min_bet));
+                possible_actions.push(PlayerAction::Raise(min_raise));
             }
         }
 
@@ -247,11 +260,11 @@ mod tests {
     }
 
     fn set_contains<T: PartialEq + Clone>(set: &[T], contained: &[T]) -> bool {
-        let mut c2 = contained.to_vec();
-        for a in set.iter() {
-            let len_before = c2.len();
-            c2.retain(|x| x != a);
-            if c2.len() != len_before - 1 {
+        let mut set = set.to_vec();
+        for a in contained.iter() {
+            let len_before = set.len();
+            set.retain(|x| x != a);
+            if set.len() != len_before - 1 {
                 return false;
             }
         }
@@ -430,8 +443,8 @@ mod tests {
 
         assert_eq!(state.player_stacks, vec![0, 0, 6]);
         assert_eq!(
-            &state.actions[state.actions.len() - 3..],
-            &[Action::AllIn(0, 4), Action::AllIn(1, 10)]
+            &state.actions[state.actions.len() - 2..],
+            &[Action::AllIn(0, 4), Action::AllIn(1, 8)]
         );
         assert_eq!(state.pot.total_size(), 18);
     }
@@ -493,7 +506,7 @@ mod tests {
 
         assert_eq!(state.player_stacks, vec![0, 8, 6]);
         assert_eq!(
-            &state.actions[state.actions.len() - 3..],
+            &state.actions[state.actions.len() - 2..],
             &[Action::Blind(2, 4), Action::AllIn(0, 10)]
         );
         assert_eq!(state.pot.total_size(), 16);
@@ -570,14 +583,14 @@ mod tests {
                 Action::Call(3, 24)
             ]
         );
-        assert_eq!(&state.player_positions, &[0, 1, 3]);
+        assert_eq!(&state.player_positions, &[0, 2, 3]);
         assert_eq!(state.num_players(), 3);
         assert_eq!(state.num_players_total(), 4);
     }
 
     #[test]
     fn test_bet_round_all_but_one_fold() {
-        let mut state = TransparentState::new(2, 3, vec![1000, 1000, 30, 1000]);
+        let mut state = TransparentState::new(3, 3, vec![1000, 1000, 30, 1000]);
         let mut players = vec![
             MockPlayer::new(vec![PlayerAction::Check, PlayerAction::Fold]),
             MockPlayer::new(vec![PlayerAction::Bet(6)]),
@@ -591,7 +604,7 @@ mod tests {
     #[test]
     fn test_apply_pre_flop_action() {
         // we basically only want to test that the correct position starts
-        let mut state = TransparentState::new(0, 3, vec![1000, 1000, 30, 1000]);
+        let mut state = TransparentState::new(6, 0, vec![1000, 1000, 30, 1000]);
         let mut players = vec![
             MockPlayer::new(vec![PlayerAction::Fold]),
             MockPlayer::new(vec![PlayerAction::Blind(6), PlayerAction::Call(6)]),
@@ -616,8 +629,8 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_pre_flop_action_big_blind_will_be_ignored_if_all_players_fold() {
-        let mut state = TransparentState::new(0, 3, vec![1000, 1000, 30, 1000]);
+    fn test_big_blind_will_be_ignored_if_all_players_fold() {
+        let mut state = TransparentState::new(6, 0, vec![1000, 1000, 30, 1000]);
         let mut players = vec![
             MockPlayer::new(vec![PlayerAction::Fold]),
             MockPlayer::new(vec![PlayerAction::Blind(6), PlayerAction::Fold]),
@@ -643,7 +656,7 @@ mod tests {
     #[test]
     fn test_apply_post_flop_action() {
         // we basically only want to test that the correct position starts
-        let mut state = TransparentState::new(0, 3, vec![1000, 1000, 30, 1000]);
+        let mut state = TransparentState::new(0, 2, vec![1000, 1000, 30, 1000]);
         let mut players = vec![
             MockPlayer::new(vec![PlayerAction::Check]),
             MockPlayer::new(vec![PlayerAction::Check]),
@@ -655,10 +668,10 @@ mod tests {
         assert_eq!(
             &state.actions,
             &[
-                Action::Check(1),
-                Action::Check(2),
                 Action::Check(3),
-                Action::Check(0)
+                Action::Check(0),
+                Action::Check(1),
+                Action::Check(2)
             ]
         );
     }
@@ -703,7 +716,7 @@ mod tests {
 
     #[test]
     fn test_reset_state() {
-        let mut state = TransparentState::new(0, 3, vec![1000, 1000, 30, 1000]);
+        let mut state = TransparentState::new(3, 0, vec![1000, 1000, 30, 1000]);
         let mut players = vec![
             MockPlayer::new(vec![PlayerAction::Fold]),
             MockPlayer::new(vec![PlayerAction::Blind(6), PlayerAction::Fold]),
