@@ -1,6 +1,6 @@
 //! This module exposes the main player trait.
-use rs_poker::core::{Card};
 use crate::actions::PlayerAction;
+use crate::deck::Card;
 use crate::ChipCount;
 use crate::TransparentState;
 
@@ -12,7 +12,7 @@ pub trait Player {
     /// about this player. Relative information can also be extracted, i.e. `position+1` is the player seated to the left
     ///
     /// The initial stack corresponds to the number of chips this player owns.
-    fn init(&mut self, position: usize, initial_stack : ChipCount);
+    fn init(&mut self, position: usize, initial_stack: ChipCount);
 
     /// This function gets called at the start of every round and reveals the cards this player has received.
     fn receive_cards(&mut self, c1: Card, c2: Card);
@@ -24,7 +24,7 @@ pub trait Player {
     /// All the actions that this player can take are listed in `possible_actions`.
     /// The player may then choose one of them and return it. The player may alter parameters for that
     /// action if this action allows it. See the documentation for `PlayerAction` for details.
-    fn act(&mut self, state : &TransparentState, possible_actions : &[PlayerAction]) -> PlayerAction;
+    fn act(&mut self, state: &TransparentState, possible_actions: &[PlayerAction]) -> PlayerAction;
 
     /// This function gets called when the player lost all the chips and has to leave the table.
     fn bust(&mut self);

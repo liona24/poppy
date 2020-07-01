@@ -1,6 +1,6 @@
 use crate::actions::PlayerAction;
+use crate::deck::Card;
 use crate::{ChipCount, Player, TransparentState};
-use rs_poker::core::Card;
 use std::collections::VecDeque;
 
 #[derive(Debug)]

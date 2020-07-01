@@ -12,19 +12,19 @@ pub type ChipCount = u32;
 #[cfg(test)]
 mod mock;
 
-pub mod deck;
 pub mod actions;
 mod board;
-mod pot;
+pub mod deck;
 mod player;
+mod pot;
 mod state;
 mod table;
 
 pub use board::Board;
-pub use pot::Pot;
 pub use player::Player;
-pub use table::{Table, BlindPolicy};
+pub use pot::Pot;
 pub use state::TransparentState;
+pub use table::{BlindPolicy, Table};
 
 #[cfg(test)]
 mod tests {

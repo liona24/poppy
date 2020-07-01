@@ -5,8 +5,8 @@
 //!
 //! This module also exposes a higher level abstraction of so-called `PlayerAction`s,
 //! which are a player's way of interacting.
+use crate::deck::Card;
 use crate::ChipCount;
-use rs_poker::core::Card;
 
 /// An `Action` is internally used to alter the game state. Using a stream of
 /// actions each round of poker played can be recovered completely.
@@ -112,7 +112,11 @@ macro_rules! validated {
 }
 
 impl Action {
-    pub(crate) fn from_player_action(player_action: PlayerAction, player_position: usize, player_stack: ChipCount) -> Self {
+    pub(crate) fn from_player_action(
+        player_action: PlayerAction,
+        player_position: usize,
+        player_stack: ChipCount,
+    ) -> Self {
         match player_action {
             PlayerAction::Blind(c) => validated!(player_stack, player_position, c, Blind),
             PlayerAction::Check => Action::Check(player_position),

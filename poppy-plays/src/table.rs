@@ -1,50 +1,22 @@
 use crate::actions::Action;
-use crate::deck::{DeckGenerator, DefaultDeckGenerator};
+use crate::deck::{Card, CardCollection, Deck};
 use crate::player::Player;
 use crate::state::TransparentState;
 use crate::ChipCount;
 use itertools::{multipeek, Itertools};
-use rs_poker::core::{Card, FlatDeck};
 
 pub enum BlindPolicy {
     NeverIncrease,
 }
 
-pub struct Table<P, G: DeckGenerator = DefaultDeckGenerator> {
+pub struct Table<P> {
     players: Vec<P>,
     blind_policy: BlindPolicy,
     transparent_state: TransparentState,
     last_cards: Vec<[Card; 2]>,
-    deck_generator: G,
 }
 
-impl<P: Player> Table<P, DefaultDeckGenerator> {
-
-    /// Initialize a new table with the given players.
-    ///
-    /// Each player is assigned an initial stack of the given size.\
-    /// The game starts with the given blind size.\
-    /// In order to increase blind levels a `BlindPolicy` should be specified.
-    ///
-    /// The first dealer position will be the first player yielded by the iterator.
-    /// After that the players will be seated in order of appearence.
-    ///
-    /// The number of players has to be in the interval [2, 22]
-    ///
-    /// The method provides a shortcut for `Table::<P, DefaultDeckGenerator>::new`
-    pub fn create_default(
-        players: impl Iterator<Item = P>,
-        stack_size: ChipCount,
-        blind_size: ChipCount,
-        blind_policy: BlindPolicy,
-    ) -> Self {
-        Table::<P, DefaultDeckGenerator>::new(players, stack_size, blind_size, blind_policy)
-    }
-}
-
-// progress_hook: Option<Box<dyn Fn(&TransparentState)>>,
-
-impl<P: Player, G: DeckGenerator> Table<P, G> {
+impl<P: Player> Table<P> {
     /// Initialize a new table with the given players.
     ///
     /// Each player is assigned an initial stack of the given size.\
@@ -68,8 +40,8 @@ impl<P: Player, G: DeckGenerator> Table<P, G> {
 
         // each player receives a dummy hand of AA. Not that it matters
         let default_card = Card {
-            value: rs_poker::core::Value::Ace,
-            suit: rs_poker::core::Suit::Club,
+            value: crate::deck::card::Value::Ace,
+            suit: crate::deck::card::Suit::Club,
         };
         let last_cards = vec![[default_card, default_card]; players.len()];
 
@@ -78,17 +50,20 @@ impl<P: Player, G: DeckGenerator> Table<P, G> {
             blind_policy,
             transparent_state: TransparentState::new(blind_size, 0, stack_sizes),
             last_cards,
-            deck_generator: G::default(),
         }
     }
 
-    pub fn play_one_round(&mut self) -> impl Iterator<Item = Action> {
+    pub fn play_one_round(
+        &mut self,
+        random_source: impl Fn(usize) -> usize,
+    ) -> impl Iterator<Item = Action> {
         let mut state = vec![Action::StartRound {
             id: 0,
             small_blind: self.transparent_state.blind_size,
             big_blind: self.transparent_state.blind_size * 2,
         }];
-        let mut deck: FlatDeck = self.deck_generator.shuffled_deck();
+        let mut deck = CardCollection::default();
+        deck.shuffle(random_source);
 
         for &i in self.transparent_state.player_positions.iter() {
             let c1 = deck.deal().unwrap();
@@ -173,5 +148,25 @@ impl<P: Player, G: DeckGenerator> Table<P, G> {
         self.transparent_state.prepare_next_round();
 
         state.into_iter()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::actions::{Action, PlayerAction};
+    use crate::mock::MockPlayer;
+
+    #[test]
+    fn test_play_one_round() {
+        let players = vec![
+            MockPlayer::new(vec![PlayerAction::Check]), // dealer
+            MockPlayer::new(vec![PlayerAction::Check]), // small
+            MockPlayer::new(vec![PlayerAction::Check]), // big
+            MockPlayer::new(vec![PlayerAction::Check]),
+        ];
+        let mut table = Table::new(players.into_iter(), 100, 1, BlindPolicy::NeverIncrease);
+
+        // TODO
     }
 }

@@ -1,4 +1,4 @@
-use rs_poker::core::{Card, Rank, Rankable};
+use crate::deck::{Card, Rank, Rankable};
 
 #[derive(Debug, Copy, Clone)]
 pub struct Board {
@@ -9,8 +9,8 @@ pub struct Board {
 impl Board {
     pub(crate) fn new() -> Self {
         let default_card = Card {
-            value: rs_poker::core::Value::Ace,
-            suit: rs_poker::core::Suit::Club,
+            value: crate::deck::card::Value::Ace,
+            suit: crate::deck::card::Suit::Club,
         };
         Self {
             cards: [

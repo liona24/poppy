@@ -1,9 +1,9 @@
 use crate::actions::{Action, PlayerAction};
 use crate::board::Board;
+use crate::deck::Card;
 use crate::player::Player;
 use crate::pot::Pot;
 use crate::ChipCount;
-use rs_poker::core::Card;
 
 /// Structure to hold state information about one round of poker played which is visible to each player.
 #[derive(Debug, Clone)]
@@ -174,7 +174,9 @@ impl TransparentState {
             }
 
             i %= self.player_positions.len();
-            if Some(self.player_positions[i]) == last_raiser || (last_raiser.is_none() && i == index_of_starting_position) {
+            if Some(self.player_positions[i]) == last_raiser
+                || (last_raiser.is_none() && i == index_of_starting_position)
+            {
                 break;
             }
         }
@@ -680,24 +682,24 @@ mod tests {
     fn test_deal_cards() {
         let mut state = TransparentState::new(0, 3, vec![1000, 1000, 30, 1000]);
         let c1 = Card {
-            value: rs_poker::core::Value::Ace,
-            suit: rs_poker::core::Suit::Club,
+            value: crate::deck::card::Value::Ace,
+            suit: crate::deck::card::Suit::Club,
         };
         let c2 = Card {
-            value: rs_poker::core::Value::Ace,
-            suit: rs_poker::core::Suit::Diamond,
+            value: crate::deck::card::Value::Ace,
+            suit: crate::deck::card::Suit::Diamond,
         };
         let c3 = Card {
-            value: rs_poker::core::Value::Ace,
-            suit: rs_poker::core::Suit::Spade,
+            value: crate::deck::card::Value::Ace,
+            suit: crate::deck::card::Suit::Spade,
         };
         let c4 = Card {
-            value: rs_poker::core::Value::Ace,
-            suit: rs_poker::core::Suit::Heart,
+            value: crate::deck::card::Value::Ace,
+            suit: crate::deck::card::Suit::Heart,
         };
         let c5 = Card {
-            value: rs_poker::core::Value::Two,
-            suit: rs_poker::core::Suit::Heart,
+            value: crate::deck::card::Value::Two,
+            suit: crate::deck::card::Suit::Heart,
         };
         state.deal_flop([c1, c2, c3]);
         state.deal_turn(c4);
