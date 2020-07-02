@@ -106,8 +106,8 @@ impl TransparentState {
         self.board.clear();
         self.actions.clear();
         self.pot.reset();
-        self.dealer_position = (self.dealer_position + 1) % self.num_players();
-        self.player_positions = generate_player_positions(self.dealer_position, self.num_players());
+        self.dealer_position = (self.dealer_position + 1) % self.num_players_total();
+        self.player_positions = generate_player_positions(self.dealer_position, self.num_players_total());
     }
 
     /// Forces the player at `position` to set a blind of the specified size.
@@ -734,5 +734,6 @@ mod tests {
         assert!(state.actions.is_empty());
         assert_eq!(state.pot.total_size(), 0);
         assert!(state.board.all_cards().is_empty());
+        assert_eq!(state.player_positions, [2, 3, 0, 1]);
     }
 }
