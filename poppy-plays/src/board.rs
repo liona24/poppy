@@ -1,5 +1,6 @@
 use crate::deck::{Card, Rank, Rankable};
 
+/// A structure representing the current state of the board, i. e. the public cards
 #[derive(Debug, Copy, Clone)]
 pub struct Board {
     cards: [Card; 7],
@@ -26,6 +27,9 @@ impl Board {
         }
     }
 
+    /// Inspect the first three cards of the board if they are dealt already.
+    ///
+    /// This method is guaranteed to return a slice of size 3 if the cards are dealt.
     pub fn flop(&self) -> Option<&[Card]> {
         if self.n >= 3 {
             Some(&self.cards[..3])
@@ -33,6 +37,8 @@ impl Board {
             None
         }
     }
+
+    /// Inspect the fourth card of the board if it is dealt already.
     pub fn turn(&self) -> Option<Card> {
         if self.n >= 4 {
             Some(self.cards[3])
@@ -40,6 +46,8 @@ impl Board {
             None
         }
     }
+
+    /// Inspect the fifth card of the board if it is dealt already.
     pub fn river(&self) -> Option<Card> {
         if self.n >= 5 {
             Some(self.cards[4])

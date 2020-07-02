@@ -113,7 +113,7 @@ fn find_flush(suit_value_sets: &[u32]) -> Option<usize> {
 }
 
 /// Can this turn into a hand rank? There are default implementations for
-/// `Hand` and `Vec<Card>`.
+/// `CardCollection` and `&[Card]`.
 pub trait Rankable {
     /// Rank the current 5 card hand.
     /// This will no cache the value.

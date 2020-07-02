@@ -150,10 +150,14 @@ impl Pot {
                 .expect("Player position was invalid")
     }
 
+    /// Get the bet size for the current round, i. e. the highest bet any player has put into the pot in the current round.
+    /// One round is corresponding to the actions taken between any two deal actions.
+    /// This value resets to zero after *any* cards have been dealt.
     pub fn bet_size_round(&self) -> ChipCount {
         self.bet_size_round
     }
 
+    /// Check whether the total pot size is zero
     pub fn is_empty(&self) -> bool {
         self.total_size() == 0
     }

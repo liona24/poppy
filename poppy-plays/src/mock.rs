@@ -3,7 +3,7 @@ use crate::deck::Card;
 use crate::{ChipCount, Player, TransparentState};
 use std::collections::VecDeque;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct MockPlayer {
     pub(crate) cards: Option<[Card; 2]>,
     pub(crate) position: Option<usize>,

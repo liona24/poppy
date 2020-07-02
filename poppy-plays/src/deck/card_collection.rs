@@ -5,20 +5,43 @@ use std::ops::Deref;
 use super::card::{Suit, Value};
 use super::{Card, Deck, Rankable};
 
+/// A convenience struct holding a collection of cards.
 #[derive(Debug, Clone)]
 pub struct CardCollection {
     cards: Vec<Card>,
 }
 
 impl CardCollection {
-    pub(crate) fn shuffle(&mut self, random_source: impl Fn(usize) -> usize) {
+    /// Shuffle this card collection using the given random number generator.
+    ///
+    /// `rng(x)` should return a random number in range `[0, x)`
+    pub fn shuffle(&mut self, rng: impl Fn(usize) -> usize) {
         for i in (1..self.len()).rev() {
-            self.cards.swap(i, random_source(i + 1));
+            self.cards.swap(i, rng(i + 1));
         }
+    }
+
+    /// Copies this card collection into an fixed size array.
+    ///
+    /// Panics if the sizes do not match.
+    ///
+    /// Example:
+    /// ```
+    /// use poppy_plays::deck::CardCollection;
+    /// let cards = CardCollection::default();
+    /// let array_of_cards = cards.to_array::<[Card; 52]>();
+    /// assert_eq!(array_of_cards, &cards);
+    /// ```
+    pub fn to_array<A: Default + AsMut<[Card]>>(&self) -> A {
+        let mut a = A::default();
+        <A as AsMut<[Card]>>::as_mut(&mut a).clone_from_slice(&self);
+        a
     }
 }
 
 impl Default for CardCollection {
+
+    /// Return a default deck consisting of 52 cards (13 values * 4 suits).
     fn default() -> Self {
         let mut cards = Vec::new();
         for v in &Value::values() {
@@ -75,7 +98,7 @@ impl TryFrom<&str> for CardCollection {
         // Where we will put the cards
         //
         // We make the assumption that the hands will have 2 plus five cards.
-        let mut cards: HashSet<Card> = HashSet::new();
+        let mut cards = Vec::new();
 
         // Keep looping until we explicitly break
         loop {
@@ -97,9 +120,11 @@ impl TryFrom<&str> for CardCollection {
                     .ok_or_else(|| format!("Couldn't parse suit {}", sco.unwrap_or('?')))?;
 
                 let c = Card { value: v, suit: s };
-                if !cards.insert(c) {
+                if cards.iter().any(|&card| card == c) {
                     // If this card is already in the set then error out.
                     return Err(format!("This card has already been added {}", c));
+                } else {
+                    cards.push(c);
                 }
             }
         }
@@ -109,7 +134,7 @@ impl TryFrom<&str> for CardCollection {
         }
 
         Ok(Self {
-            cards: cards.into_iter().collect(),
+            cards
         })
     }
 }
