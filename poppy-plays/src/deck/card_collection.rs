@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::convert::TryFrom;
 use std::ops::Deref;
 
@@ -24,15 +23,7 @@ impl CardCollection {
     /// Copies this card collection into an fixed size array.
     ///
     /// Panics if the sizes do not match.
-    ///
-    /// Example:
-    /// ```
-    /// use poppy_plays::deck::CardCollection;
-    /// let cards = CardCollection::default();
-    /// let array_of_cards = cards.to_array::<[Card; 52]>();
-    /// assert_eq!(array_of_cards, &cards);
-    /// ```
-    pub fn to_array<A: Default + AsMut<[Card]>>(&self) -> A {
+    pub(crate) fn to_array<A: Default + AsMut<[Card]>>(&self) -> A {
         let mut a = A::default();
         <A as AsMut<[Card]>>::as_mut(&mut a).clone_from_slice(&self);
         a
@@ -40,7 +31,6 @@ impl CardCollection {
 }
 
 impl Default for CardCollection {
-
     /// Return a default deck consisting of 52 cards (13 values * 4 suits).
     fn default() -> Self {
         let mut cards = Vec::new();
@@ -133,9 +123,7 @@ impl TryFrom<&str> for CardCollection {
             return Err(String::from("Extra un-used chars found."));
         }
 
-        Ok(Self {
-            cards
-        })
+        Ok(Self { cards })
     }
 }
 

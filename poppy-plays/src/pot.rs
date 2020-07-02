@@ -1,6 +1,5 @@
 //! This module exposes a structure `Pot` which takes care of shared chips.
 use crate::ChipCount;
-use itertools::Itertools;
 
 /// A pot which takes care of shared chips.
 ///
@@ -82,16 +81,15 @@ impl Pot {
         }
 
         let player_which_receives_rest = player_positions.first().copied();
-        let player_positions = player_positions
-            .iter()
-            .sorted_by_key(|&&pos| self.player_bets[pos]);
+        let mut player_positions = player_positions.to_owned();
+        player_positions.sort_by_key(|&pos| self.player_bets[pos]);
 
         let mut n_receivers = player_positions.len() as u32;
         let mut pot_size = 0;
 
         let mut stacks = vec![0; self.player_bets.len()];
 
-        for &pos in player_positions {
+        for pos in player_positions {
             let shared_size = self.player_bets[pos];
             for bet_size in self.player_bets.iter_mut() {
                 let actual_size = std::cmp::min(*bet_size, shared_size);

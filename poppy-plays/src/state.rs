@@ -107,7 +107,8 @@ impl TransparentState {
         self.actions.clear();
         self.pot.reset();
         self.dealer_position = (self.dealer_position + 1) % self.num_players_total();
-        self.player_positions = generate_player_positions(self.dealer_position, self.num_players_total());
+        self.player_positions =
+            generate_player_positions(self.dealer_position, self.num_players_total());
     }
 
     /// Forces the player at `position` to set a blind of the specified size.

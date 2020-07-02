@@ -3,7 +3,6 @@ use crate::deck::{Card, Deck};
 use crate::player::Player;
 use crate::state::TransparentState;
 use crate::ChipCount;
-use itertools::{multipeek, Itertools};
 
 /// Exposes variants to handle blind policies, i. e. control when and how much the blind size should be increased.
 pub enum BlindPolicy {
@@ -130,22 +129,26 @@ impl<P: Player> Table<P> {
                 ))
             }
             ranked_hands.sort_by_key(|x| std::cmp::Reverse(x.clone().0));
-            let mut ranked_hands = multipeek(ranked_hands.into_iter());
 
-            while let Some((best_rank, _)) = ranked_hands.peek().cloned() {
-                let positions: Vec<_> = ranked_hands
-                    .peeking_take_while(|(rank, _)| rank == &best_rank)
-                    .map(|(_, i)| i)
-                    .collect();
-                let win = self.transparent_state.pot.distribute(&positions);
+            let mut i = 0;
+            while i < ranked_hands.len() {
+                let mut j = i + 1;
+                while j < ranked_hands.len() && ranked_hands[i].0 == ranked_hands[j].0 {
+                    j += 1;
+                }
+                let positions: Vec<_> = ranked_hands[i..j].iter().map(|(_, p)| *p).collect();
+                let won_amounts = self.transparent_state.pot.distribute(&positions);
                 for p in positions.into_iter() {
-                    let amount = win[p];
+                    let amount = won_amounts[p];
                     state.push(Action::Win(p, amount));
                     self.transparent_state.player_stacks[p] += amount;
                 }
+
                 if self.transparent_state.pot.is_empty() {
                     break;
                 }
+
+                i = j;
             }
         }
 
@@ -433,7 +436,7 @@ mod tests {
                 PlayerAction::Raise(20),
                 PlayerAction::Fold, // end first round
                 PlayerAction::Blind(2),
-                PlayerAction::AllIn(80),
+                PlayerAction::AllIn(78),
             ]),
         ];
         let mut table = Table::new(players.into_iter(), 100, 1, BlindPolicy::NeverIncrease);
@@ -446,9 +449,9 @@ mod tests {
         // 2 -> Ad, 7s; 3 -> Th, Td; 0 -> Ks, Qs; 1 -> 2c, 8c
         // Flop -> 2s, Qd, Tc
         // Turn -> 9d
-        // River -> Jc
+        // River -> 2d
         // (eventually TT wins with triples)
-        let deck: CardCollection = "Jc9dTcQd2s2c8cKsQsTdTh7sAd".try_into().unwrap();
+        let deck: CardCollection = "2d9dTcQd2s2c8cKsQsTdTh7sAd".try_into().unwrap();
         let actions: Vec<Action> = table.play_one_round(deck).collect();
 
         let flop = [
@@ -470,8 +473,8 @@ mod tests {
             suit: Suit::Diamond,
         };
         let river = Card {
-            value: Value::Jack,
-            suit: Suit::Club,
+            value: Value::Two,
+            suit: Suit::Diamond,
         };
 
         assert_eq!(
@@ -482,7 +485,7 @@ mod tests {
                 Action::Call(0, 2),
                 Action::Fold(1),
                 Action::Call(2, 1),
-                Action::AllIn(3, 80),
+                Action::AllIn(3, 78),
                 Action::Call(0, 78),
                 Action::Call(2, 78),
                 Action::DealFlop(flop),

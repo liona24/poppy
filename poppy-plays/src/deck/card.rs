@@ -225,7 +225,10 @@ impl fmt::Display for Card {
 impl Default for Card {
     /// This is a pure convenience implementation. The default card is ace of spades.
     fn default() -> Self {
-        Self { value: Value::Ace, suit: Suit::Spade }
+        Self {
+            value: Value::Ace,
+            suit: Suit::Spade,
+        }
     }
 }
 
