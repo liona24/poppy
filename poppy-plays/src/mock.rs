@@ -30,10 +30,6 @@ impl Player for MockPlayer {
         self.position = Some(position);
     }
 
-    fn receive_cards(&mut self, c1: Card, c2: Card) {
-        self.cards = Some([c1, c2]);
-    }
-
     fn act(
         &mut self,
         _state: &TransparentState,

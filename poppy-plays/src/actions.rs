@@ -15,7 +15,7 @@ use crate::ChipCount;
 ///
 /// Usually the first argument corresponds to position the player who has caused the action (or who can be associated with this action) resides.
 ///
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Action {
     /// Indicates the start of the round.
     StartRound {
@@ -50,10 +50,8 @@ pub enum Action {
     Bet(usize, ChipCount),
     /// Indicates that the player at the given location folded his hand.
     Fold(usize),
-    /// Indicates that the player at the given location won the given amount of chips.
-    Win(usize, ChipCount),
-    /// Indicates that one round ended.
-    EndRound,
+    /// Indicates that the players at the given locations won the given amount of chips.
+    Win(Vec<(usize, ChipCount)>),
 }
 
 /// An action a player can cause.

@@ -1,6 +1,6 @@
 use crate::actions::{Action, PlayerAction};
 use crate::board::Board;
-use crate::deck::Card;
+use crate::deck::{Card, Deck};
 use crate::player::Player;
 use crate::pot::Pot;
 use crate::ChipCount;
@@ -10,6 +10,10 @@ use crate::ChipCount;
 pub struct TransparentState {
     /// The current state of the board
     pub board: Board,
+
+    /// The cards each player is holding
+    pub hands: Vec<[Card; 2]>,
+
     /// The actions taken so far in this round.
     pub actions: Vec<Action>,
 
@@ -41,6 +45,23 @@ pub struct TransparentState {
     ///
     /// It is indexed by player position (or also referenced to as the player id).
     pub player_stacks: Vec<ChipCount>,
+
+    /// Unique identifier for the current round played.
+    pub id: usize,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct BetRoundState {
+    index_of_starting_position: usize,
+    i: usize,
+    last_raiser: Option<usize>,
+    done: bool,
+}
+
+impl BetRoundState {
+    pub(crate) fn done(&self) -> bool {
+        self.done
+    }
 }
 
 impl TransparentState {
@@ -49,14 +70,22 @@ impl TransparentState {
         dealer_position: usize,
         player_stacks: Vec<ChipCount>,
     ) -> Self {
+        let default_card = Card {
+            value: crate::deck::card::Value::Ace,
+            suit: crate::deck::card::Suit::Club,
+        };
+        let hands = vec![[default_card, default_card]; player_stacks.len()];
+
         Self {
             board: Board::new(),
+            hands,
             actions: Vec::new(),
             pot: Pot::new(player_stacks.len()),
             blind_size,
             dealer_position,
             player_positions: generate_player_positions(dealer_position, player_stacks.len()),
             player_stacks,
+            id: 0,
         }
     }
 
@@ -70,45 +99,153 @@ impl TransparentState {
         self.player_positions.len()
     }
 
-    pub(crate) fn apply_small_blind<P: Player>(&mut self, players: &mut Vec<P>) {
+    /// Pre-emptively reserves the cards for each player from the given deck
+    pub(crate) fn prepare_hands(&mut self, d: &mut impl Deck) {
+        for &i in self.player_positions.iter() {
+            let c1 = d.deal().expect("Deck should contain enough cards");
+            let c2 = d.deal().expect("Deck should contain enough cards");
+            self.hands[i] = [c1, c2];
+        }
+    }
+
+    /// Query the cards which were dealt to the player at the given position.
+    ///
+    /// Use responsibly.
+    pub fn query_cards(&self, player_position: usize) -> [Card; 2] {
+        self.hands[player_position]
+    }
+
+    /// Deals the prepared hand to the player with the given id
+    pub(crate) fn deal_hand(&mut self, i: usize) -> Action {
+        let pos = self.player_positions[i];
+        self.mirrored_action(Action::DealHand(pos, self.hands[pos]))
+    }
+
+    /// Initializes this state for the next round
+    pub(crate) fn start_round(&mut self) -> Action {
+        self.mirrored_action(Action::StartRound {
+            id: self.id,
+            small_blind: self.blind_size,
+            big_blind: self.blind_size * 2,
+        })
+    }
+
+    pub(crate) fn apply_small_blind<P: Player>(&mut self, players: &mut [P]) -> Action {
         let action = self.blind(players, self.player_positions[0], self.blind_size);
-        self.actions.push(action);
+        self.mirrored_action(action)
     }
-    pub(crate) fn apply_big_blind<P: Player>(&mut self, players: &mut Vec<P>) {
+
+    pub(crate) fn apply_big_blind<P: Player>(&mut self, players: &mut [P]) -> Action {
         let action = self.blind(players, self.player_positions[1], self.blind_size * 2);
-        self.actions.push(action);
+        self.mirrored_action(action)
     }
-    pub(crate) fn apply_pre_flop_action<P: Player>(&mut self, players: &mut Vec<P>) -> bool {
+
+    /// Create a state object which can be used in `step_bet_round` until the bet round finished
+    ///
+    /// This method shall be used for betting **before** the flop has been dealt.
+    pub(crate) fn init_pre_flop_action(&self) -> BetRoundState {
         // pre-flop action starts at big blind + 1
         let i = 2 % self.num_players();
-        self.bet_round(i, players)
-    }
-    pub(crate) fn apply_post_flop_action<P: Player>(&mut self, players: &mut Vec<P>) -> bool {
-        self.bet_round(0, players)
+        BetRoundState {
+            i,
+            index_of_starting_position: i,
+            last_raiser: None,
+            done: false,
+        }
     }
 
-    pub(crate) fn deal_flop(&mut self, cards: [Card; 3]) {
-        self.actions.push(Action::DealFlop(cards));
+    /// Create a state object which can be used in `step_bet_round` until the bet round finished
+    ///
+    /// This method shall be used for betting **after** the flop has been dealt.
+    pub(crate) fn init_post_flop_action(&self) -> BetRoundState {
+        BetRoundState {
+            i: 0,
+            index_of_starting_position: 0,
+            last_raiser: None,
+            done: false,
+        }
+    }
+
+    /// Continue a betting round which is represented by the given `state`.
+    ///
+    /// This is basically a poor man's iterator.
+    /// It shall be exhausted until `state.done() == true`.
+    ///
+    /// The actual action taken is returned.
+    /// This may be `None` if a player has to be skipped.
+    pub(crate) fn step_bet_round<P: Player>(
+        &mut self,
+        state: &mut BetRoundState,
+        players: &mut [P],
+    ) -> Option<Action> {
+        if state.done() {
+            return None;
+        }
+
+        let pos = self.player_positions[state.i];
+
+        let (action, is_raise) = self.player_action(pos, &mut players[pos]);
+        if is_raise {
+            state.last_raiser = Some(pos);
+        }
+        if let Some(Action::Fold(_)) = action {
+            self.player_positions.remove(state.i);
+            if state.last_raiser.is_none() && state.i == state.index_of_starting_position {
+                // this is the special case when pre-flop players only either fold or call to the big-blind
+                state.i %= self.num_players();
+                state.index_of_starting_position = state.i;
+                if self.num_players() == 1 {
+                    state.done = true;
+                    self.pot.end_bet_round();
+                }
+                return Some(self.mirrored_action(action.unwrap()));
+            }
+        } else {
+            state.i += 1;
+        }
+
+        state.i %= self.num_players();
+        if Some(self.player_positions[state.i]) == state.last_raiser
+            || (state.last_raiser.is_none() && state.i == state.index_of_starting_position)
+            || self.num_players() == 1
+        {
+            self.pot.end_bet_round();
+            state.done = true;
+        }
+
+        if let Some(action) = action {
+            Some(self.mirrored_action(action))
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn deal_flop(&mut self, cards: [Card; 3]) -> Action {
         self.board.deal_flop(cards);
+        self.mirrored_action(Action::DealFlop(cards))
     }
 
-    pub(crate) fn deal_turn(&mut self, card: Card) {
-        self.actions.push(Action::DealTurn(card));
+    pub(crate) fn deal_turn(&mut self, card: Card) -> Action {
         self.board.deal_turn(card);
+        self.mirrored_action(Action::DealTurn(card))
     }
 
-    pub(crate) fn deal_river(&mut self, card: Card) {
-        self.actions.push(Action::DealRiver(card));
+    pub(crate) fn deal_river(&mut self, card: Card) -> Action {
         self.board.deal_river(card);
+        self.mirrored_action(Action::DealRiver(card))
     }
 
-    pub(crate) fn prepare_next_round(&mut self) {
+    /// Ends the currently played round.
+    /// Resets all internal state and advances the dealer position.
+    pub(crate) fn end_round(&mut self) {
         self.board.clear();
         self.actions.clear();
         self.pot.reset();
         self.dealer_position = (self.dealer_position + 1) % self.num_players_total();
         self.player_positions =
             generate_player_positions(self.dealer_position, self.num_players_total());
+        self.actions.clear();
+        self.id += 1;
     }
 
     /// Forces the player at `position` to set a blind of the specified size.
@@ -117,12 +254,7 @@ impl TransparentState {
     /// it has not enough chips available.
     ///
     /// Returns the corresponding action taken
-    fn blind<P: Player>(
-        &mut self,
-        players: &mut Vec<P>,
-        position: usize,
-        size: ChipCount,
-    ) -> Action {
+    fn blind<P: Player>(&mut self, players: &mut [P], position: usize, size: ChipCount) -> Action {
         let actual_bet_size;
         let player_action = if self.player_stacks[position] <= size {
             actual_bet_size = self.player_stacks[position];
@@ -144,56 +276,18 @@ impl TransparentState {
         action_taken
     }
 
-    /// Perform one bet round starting with the player having its position at the given index.
-    ///
-    /// Returns `true` if only one player is left after this bet round (i.e. the round is finished).
-    fn bet_round<P: Player>(
-        &mut self,
-        mut index_of_starting_position: usize,
-        players: &mut Vec<P>,
-    ) -> bool {
-        let mut i = index_of_starting_position;
-        let mut last_raiser = None;
-        loop {
-            let pos = self.player_positions[i];
-            if self.player_action(pos, &mut players[pos]) {
-                last_raiser = Some(pos);
-            }
-            if let Some(&Action::Fold(_)) = self.actions.last() {
-                self.player_positions.remove(i);
-                if self.player_positions.len() == 1 {
-                    return true;
-                }
-                if last_raiser.is_none() && i == index_of_starting_position {
-                    // this is the special case when pre-flop players only eitherfold or call to the big-blind
-                    i %= self.player_positions.len();
-                    index_of_starting_position = i;
-                    continue;
-                }
-            } else {
-                i += 1;
-            }
-
-            i %= self.player_positions.len();
-            if Some(self.player_positions[i]) == last_raiser
-                || (last_raiser.is_none() && i == index_of_starting_position)
-            {
-                break;
-            }
-        }
-
-        self.pot.end_bet_round();
-
-        self.player_positions.len() == 1
-    }
-
     /// Setup possible actions for player at the given position.
     ///
-    /// This function returns `true` if the action taken can be considered a raise (i.e. Bet, Raise, AllIn which raised)
-    fn player_action(&mut self, position: usize, player: &mut impl Player) -> bool {
+    /// This function returns a pair of the action taken (if any) and a boolean indicating if the action taken can be considered a raise (i.e. Bet, Raise, AllIn which raised).
+    /// The only case in which no action is taken, is if the player at the given position does not have any chips left.
+    fn player_action(
+        &mut self,
+        position: usize,
+        player: &mut impl Player,
+    ) -> (Option<Action>, bool) {
         let stack = self.player_stacks[position];
         if stack == 0 {
-            return false;
+            return (None, false);
         }
 
         let req_bet = self.pot.required_bet_size(position);
@@ -227,14 +321,20 @@ impl TransparentState {
             }
             _ => None,
         };
-        self.actions.push(action);
 
-        if let Some(actual_bet_size) = actual_bet_size {
+        let is_raise = if let Some(actual_bet_size) = actual_bet_size {
             self.player_stacks[position] -= actual_bet_size;
             self.pot.place_chips(position, actual_bet_size)
         } else {
             false
-        }
+        };
+
+        (Some(action), is_raise)
+    }
+
+    fn mirrored_action(&mut self, a: Action) -> Action {
+        self.actions.push(a.clone());
+        a
     }
 }
 
@@ -338,7 +438,8 @@ mod tests {
         ];
         state.apply_small_blind(&mut players);
         state.apply_big_blind(&mut players);
-        assert!(!state.player_action(0, &mut players[0]));
+        let (action, is_raise) = state.player_action(0, &mut players[0]);
+        assert!(!is_raise);
 
         assert!(set_equal(
             &players[0].last_possible_actions,
@@ -350,10 +451,7 @@ mod tests {
             ]
         ));
         assert_eq!(state.player_stacks, vec![6, 8, 6]);
-        assert_eq!(
-            state.actions.last().expect("Should have last action"),
-            &Action::Call(0, 4)
-        );
+        assert_eq!(action, Some(Action::Call(0, 4)));
         assert_eq!(state.pot.total_size(), 10);
     }
 
@@ -369,7 +467,8 @@ mod tests {
         state.apply_big_blind(&mut players);
         state.player_action(0, &mut players[0]);
         state.player_action(1, &mut players[1]);
-        assert!(state.player_action(2, &mut players[2]));
+        let (action, is_raise) = state.player_action(2, &mut players[2]);
+        assert!(is_raise);
 
         assert!(set_equal(
             &players[2].last_possible_actions,
@@ -380,10 +479,7 @@ mod tests {
             ]
         ));
         assert_eq!(state.player_stacks, vec![6, 6, 1]);
-        assert_eq!(
-            state.actions.last().expect("Should have last action"),
-            &Action::Bet(2, 5)
-        );
+        assert_eq!(action, Some(Action::Bet(2, 5)));
         assert_eq!(state.pot.total_size(), 17);
     }
 
@@ -398,7 +494,8 @@ mod tests {
         state.apply_small_blind(&mut players);
         state.apply_big_blind(&mut players);
         state.player_action(0, &mut players[0]);
-        assert!(state.player_action(1, &mut players[1]));
+        let (action, is_raise) = state.player_action(1, &mut players[1]);
+        assert!(is_raise);
 
         assert!(set_equal(
             &players[1].last_possible_actions,
@@ -410,10 +507,7 @@ mod tests {
             ]
         ));
         assert_eq!(state.player_stacks, vec![6, 1, 6]);
-        assert_eq!(
-            state.actions.last().expect("Should have last action"),
-            &Action::Raise(1, 7)
-        );
+        assert_eq!(action, Some(Action::Raise(1, 7)),);
         assert_eq!(state.pot.total_size(), 17);
     }
 
@@ -427,8 +521,11 @@ mod tests {
         ];
         state.apply_small_blind(&mut players);
         state.apply_big_blind(&mut players);
-        assert!(!state.player_action(0, &mut players[0]));
-        assert!(state.player_action(1, &mut players[1]));
+        let (first_action, first_is_raise) = state.player_action(0, &mut players[0]);
+        let (secnd_action, secnd_is_raise) = state.player_action(1, &mut players[1]);
+
+        assert!(!first_is_raise);
+        assert!(secnd_is_raise);
 
         assert!(set_equal(
             &players[0].last_possible_actions,
@@ -445,10 +542,8 @@ mod tests {
         ));
 
         assert_eq!(state.player_stacks, vec![0, 0, 6]);
-        assert_eq!(
-            &state.actions[state.actions.len() - 2..],
-            &[Action::AllIn(0, 4), Action::AllIn(1, 8)]
-        );
+        assert_eq!(first_action, Some(Action::AllIn(0, 4)));
+        assert_eq!(secnd_action, Some(Action::AllIn(1, 8)));
         assert_eq!(state.pot.total_size(), 18);
     }
 
@@ -464,13 +559,11 @@ mod tests {
         state.apply_big_blind(&mut players);
         state.player_action(0, &mut players[0]);
         state.player_action(1, &mut players[1]);
-        assert!(!state.player_action(2, &mut players[2]));
+        let (action, is_raise) = state.player_action(2, &mut players[2]);
+        assert!(!is_raise);
 
         assert_eq!(state.player_stacks, vec![6, 6, 6]);
-        assert_eq!(
-            state.actions.last().expect("Should have last action"),
-            &Action::Check(2)
-        );
+        assert_eq!(action, Some(Action::Check(2)));
         assert_eq!(state.pot.total_size(), 12);
     }
 
@@ -484,13 +577,11 @@ mod tests {
         ];
         state.apply_small_blind(&mut players);
         state.apply_big_blind(&mut players);
-        assert!(!state.player_action(0, &mut players[0]));
+        let (action, is_raise) = state.player_action(0, &mut players[0]);
+        assert!(!is_raise);
 
         assert_eq!(state.player_stacks, vec![10, 8, 6]);
-        assert_eq!(
-            state.actions.last().expect("Should have last action"),
-            &Action::Fold(0)
-        );
+        assert_eq!(action, Some(Action::Fold(0)));
         assert_eq!(state.pot.total_size(), 6);
     }
 
@@ -504,14 +595,14 @@ mod tests {
         ];
         state.apply_small_blind(&mut players);
         state.apply_big_blind(&mut players);
-        assert!(state.player_action(0, &mut players[0]));
-        assert!(!state.player_action(0, &mut players[0]));
+        let (first_action, first_is_raise) = state.player_action(0, &mut players[0]);
+        let (secnd_action, secnd_is_raise) = state.player_action(0, &mut players[0]);
+        assert!(first_is_raise);
+        assert!(!secnd_is_raise);
 
         assert_eq!(state.player_stacks, vec![0, 8, 6]);
-        assert_eq!(
-            &state.actions[state.actions.len() - 2..],
-            &[Action::Blind(2, 4), Action::AllIn(0, 10)]
-        );
+        assert_eq!(first_action, Some(Action::AllIn(0, 10)));
+        assert!(secnd_action.is_none());
         assert_eq!(state.pot.total_size(), 16);
     }
 
@@ -569,7 +660,11 @@ mod tests {
                 PlayerAction::Call(24),
             ]),
         ];
-        assert!(!state.bet_round(0, &mut players));
+        let mut s = state.init_post_flop_action();
+        while !s.done {
+            state.step_bet_round(&mut s, &mut players);
+        }
+        assert!(state.num_players() > 0);
 
         assert_eq!(
             &state.actions,
@@ -600,7 +695,10 @@ mod tests {
             MockPlayer::new(vec![PlayerAction::Fold]),
             MockPlayer::new(vec![PlayerAction::Fold]),
         ];
-        assert!(state.bet_round(0, &mut players));
+        let mut s = state.init_post_flop_action();
+        while !s.done {
+            state.step_bet_round(&mut s, &mut players);
+        }
         assert_eq!(&state.player_positions, &[1]);
     }
 
@@ -616,7 +714,12 @@ mod tests {
         ];
         state.apply_small_blind(&mut players);
         state.apply_big_blind(&mut players);
-        assert!(!state.apply_pre_flop_action(&mut players));
+
+        let mut s = state.init_pre_flop_action();
+        while !s.done {
+            state.step_bet_round(&mut s, &mut players);
+        }
+        assert!(state.num_players() > 1);
 
         assert_eq!(
             &state.actions,
@@ -642,7 +745,12 @@ mod tests {
         ];
         state.apply_small_blind(&mut players);
         state.apply_big_blind(&mut players);
-        assert!(state.apply_pre_flop_action(&mut players));
+
+        let mut s = state.init_pre_flop_action();
+        while !s.done {
+            println!("{:?}", state.step_bet_round(&mut s, &mut players));
+        }
+        assert!(state.num_players() == 1);
 
         assert_eq!(
             &state.actions,
@@ -666,7 +774,11 @@ mod tests {
             MockPlayer::new(vec![PlayerAction::Check]),
             MockPlayer::new(vec![PlayerAction::Check]),
         ];
-        assert!(!state.apply_post_flop_action(&mut players));
+        let mut s = state.init_post_flop_action();
+        while !s.done {
+            state.step_bet_round(&mut s, &mut players);
+        }
+        assert!(state.num_players() > 1);
 
         assert_eq!(
             &state.actions,
@@ -728,9 +840,12 @@ mod tests {
         ];
         state.apply_small_blind(&mut players);
         state.apply_big_blind(&mut players);
-        state.apply_pre_flop_action(&mut players);
+        let mut s = state.init_pre_flop_action();
+        while !s.done {
+            state.step_bet_round(&mut s, &mut players);
+        }
 
-        state.prepare_next_round();
+        state.end_round();
 
         assert!(state.actions.is_empty());
         assert_eq!(state.pot.total_size(), 0);

@@ -23,6 +23,7 @@ impl CardCollection {
     /// Copies this card collection into an fixed size array.
     ///
     /// Panics if the sizes do not match.
+    #[cfg(test)]
     pub(crate) fn to_array<A: Default + AsMut<[Card]>>(&self) -> A {
         let mut a = A::default();
         <A as AsMut<[Card]>>::as_mut(&mut a).clone_from_slice(&self);

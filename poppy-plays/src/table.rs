@@ -1,7 +1,7 @@
 use crate::actions::Action;
 use crate::deck::{Card, Deck};
 use crate::player::Player;
-use crate::state::TransparentState;
+use crate::state::{BetRoundState, TransparentState};
 use crate::ChipCount;
 
 /// Exposes variants to handle blind policies, i. e. control when and how much the blind size should be increased.
@@ -16,7 +16,229 @@ pub struct Table<P> {
     players: Vec<P>,
     blind_policy: BlindPolicy,
     transparent_state: TransparentState,
-    last_cards: Vec<[Card; 2]>,
+}
+
+/// This enum represents the current stage of the round.
+/// It is used for the `Round` structure to hold state information
+enum RoundIteratorStage {
+    /// The round is about to start
+    Init,
+    /// The player at the given position is about to receive its cards
+    DealHand(usize),
+    /// The small blind is about to be placed.
+    /// Note that we will deal cards before the blinds.
+    SmallBlind,
+    /// The big blind is about to be placed.
+    /// Note that we will deal cards before the blinds.
+    BigBlind,
+    /// This represents the state after the blinds have been dealt.
+    /// Eventually it ends when either no player is remaining (skips ahead to distribute the pot and sets the stage to `PastEnd`) or
+    /// the flop is dealt, which progresses the state to `PostFlop`.
+    PostBlind(BetRoundState),
+    /// Analogous to `PostBlind`, this represents the state after the flop has been dealt.
+    PostFlop(BetRoundState),
+    /// Analogous to `PostBlind`, this represents the state after the turn has been dealt.
+    PostTurn(BetRoundState),
+    /// Analogous to `PostBlind`, this represents the state after the river has been dealt.
+    PostRiver(BetRoundState),
+    /// The past-end stage, indicating that this round is finished. This stage will loop indefinitely.
+    PastEnd,
+}
+
+/// Structure to wrap the `TransparentState` into an iterator.
+/// Each step taken by the iterator corresponds to one step taken in the round played.
+///
+/// This iterator object supports freezing and replay (fast-forward play).
+pub struct Round<'a, P> {
+    players: &'a mut Vec<P>,
+    transparent_state: &'a mut TransparentState,
+    next_cards: Vec<Card>,
+    iterator_stage: RoundIteratorStage,
+}
+
+impl<'a, P> Round<'a, P> {
+    fn new(
+        players: &'a mut Vec<P>,
+        transparent_state: &'a mut TransparentState,
+        mut deck: impl Deck,
+    ) -> Self {
+        transparent_state.prepare_hands(&mut deck);
+
+        // we pre-emptively "fill" the board in order to make serialization less heavy
+        let mut next_cards = Vec::with_capacity(5);
+        for _ in 0..5 {
+            next_cards.push(deck.deal().expect("Deck should contain enough cards"));
+        }
+        // we will want to preserve order, just for consistency reasons (since we will be popping from back to front)
+        next_cards.reverse();
+
+        Self {
+            players,
+            transparent_state,
+            next_cards,
+            iterator_stage: RoundIteratorStage::Init,
+        }
+    }
+
+    fn distribute_pot(&mut self) -> Action {
+        let action = if self.transparent_state.num_players() == 1 {
+            // the player left gets the pot
+            let pos = *self.transparent_state.player_positions.first().unwrap();
+            let win = self
+                .transparent_state
+                .pot
+                .distribute(&self.transparent_state.player_positions)[pos];
+            self.transparent_state.player_stacks[pos] += win;
+
+            Action::Win(vec![(pos, win)])
+        } else {
+            // prepare showdown
+            let mut ranked_hands = Vec::new();
+            for &i in self.transparent_state.player_positions.iter() {
+                ranked_hands.push((
+                    self.transparent_state
+                        .board
+                        .rank_hand(self.transparent_state.hands[i]),
+                    i,
+                ))
+            }
+            ranked_hands.sort_by_key(|x| x.0.clone());
+            let mut wins = Vec::new();
+
+            while let Some((rank, pos)) = ranked_hands.pop() {
+                let mut positions = vec![pos];
+                while !ranked_hands.is_empty() && ranked_hands.last().unwrap().0 == rank {
+                    positions.push(ranked_hands.pop().unwrap().1);
+                }
+
+                let won_amounts = self.transparent_state.pot.distribute(&positions);
+                for p in positions.into_iter() {
+                    let amount = won_amounts[p];
+                    wins.push((p, amount));
+                    self.transparent_state.player_stacks[p] += amount;
+                }
+
+                if self.transparent_state.pot.is_empty() {
+                    break;
+                }
+            }
+
+            Action::Win(wins)
+        };
+
+        self.transparent_state.end_round();
+        self.iterator_stage = RoundIteratorStage::PastEnd;
+
+        action
+    }
+}
+
+impl<'a, P: Player> Iterator for Round<'a, P> {
+    type Item = Action;
+
+    /// Progresses the state of the round one step ahead.
+    /// All actions taken so far are mirrored into the underlying `TransparentState`
+    fn next(&mut self) -> Option<Self::Item> {
+        match &mut self.iterator_stage {
+            RoundIteratorStage::Init => {
+                self.iterator_stage = RoundIteratorStage::DealHand(0);
+                Some(self.transparent_state.start_round())
+            }
+            RoundIteratorStage::DealHand(i) => {
+                let i = *i;
+                self.iterator_stage = if i + 1 >= self.transparent_state.num_players() {
+                    RoundIteratorStage::SmallBlind
+                } else {
+                    RoundIteratorStage::DealHand(i + 1)
+                };
+                Some(self.transparent_state.deal_hand(i))
+            }
+            RoundIteratorStage::SmallBlind => {
+                self.iterator_stage = RoundIteratorStage::BigBlind;
+                Some(self.transparent_state.apply_small_blind(&mut self.players))
+            }
+            RoundIteratorStage::BigBlind => {
+                self.iterator_stage =
+                    RoundIteratorStage::PostBlind(self.transparent_state.init_pre_flop_action());
+                Some(self.transparent_state.apply_big_blind(&mut self.players))
+            }
+            RoundIteratorStage::PostBlind(i) => {
+                while !i.done() {
+                    let action = self.transparent_state.step_bet_round(i, &mut self.players);
+                    if action.is_some() {
+                        return action;
+                    }
+                }
+
+                if self.transparent_state.num_players() == 1 {
+                    Some(self.distribute_pot())
+                } else {
+                    // deal flop
+                    self.iterator_stage = RoundIteratorStage::PostFlop(
+                        self.transparent_state.init_post_flop_action(),
+                    );
+                    Some(self.transparent_state.deal_flop([
+                        self.next_cards.pop().unwrap(),
+                        self.next_cards.pop().unwrap(),
+                        self.next_cards.pop().unwrap(),
+                    ]))
+                }
+            }
+            RoundIteratorStage::PostFlop(i) => {
+                while !i.done() {
+                    let action = self.transparent_state.step_bet_round(i, &mut self.players);
+                    if action.is_some() {
+                        return action;
+                    }
+                }
+
+                if self.transparent_state.num_players() == 1 {
+                    Some(self.distribute_pot())
+                } else {
+                    // deal turn
+                    self.iterator_stage = RoundIteratorStage::PostTurn(
+                        self.transparent_state.init_post_flop_action(),
+                    );
+                    Some(
+                        self.transparent_state
+                            .deal_turn(self.next_cards.pop().unwrap()),
+                    )
+                }
+            }
+            RoundIteratorStage::PostTurn(i) => {
+                while !i.done() {
+                    let action = self.transparent_state.step_bet_round(i, &mut self.players);
+                    if action.is_some() {
+                        return action;
+                    }
+                }
+
+                if self.transparent_state.num_players() == 1 {
+                    Some(self.distribute_pot())
+                } else {
+                    // deal river
+                    self.iterator_stage = RoundIteratorStage::PostRiver(
+                        self.transparent_state.init_post_flop_action(),
+                    );
+                    Some(
+                        self.transparent_state
+                            .deal_river(self.next_cards.pop().unwrap()),
+                    )
+                }
+            }
+            RoundIteratorStage::PostRiver(i) => {
+                while !i.done() {
+                    let action = self.transparent_state.step_bet_round(i, &mut self.players);
+                    if action.is_some() {
+                        return action;
+                    }
+                }
+
+                Some(self.distribute_pot())
+            }
+            RoundIteratorStage::PastEnd => None,
+        }
+    }
 }
 
 impl<P: Player> Table<P> {
@@ -42,120 +264,20 @@ impl<P: Player> Table<P> {
 
         let stack_sizes = vec![stack_size; players.len()];
 
-        // each player receives a dummy hand of AA. Not that it matters
-        let default_card = Card {
-            value: crate::deck::card::Value::Ace,
-            suit: crate::deck::card::Suit::Club,
-        };
-        let last_cards = vec![[default_card, default_card]; players.len()];
-
         Self {
             players,
             blind_policy,
             transparent_state: TransparentState::new(blind_size, 0, stack_sizes),
-            last_cards,
         }
     }
 
     /// Play one round of poker at this table using the given deck.
     ///
-    /// Returns all the actions taken during this round.
+    /// Returns a `Round` structure which is essentially a fancy iterator.
     ///
     /// It is expected that the given deck is valid, i. e. contains all cards, is properly shuffled, etc.
-    pub fn play_one_round(&mut self, mut deck: impl Deck) -> impl Iterator<Item = Action> {
-        let mut state = vec![Action::StartRound {
-            id: 0,
-            small_blind: self.transparent_state.blind_size,
-            big_blind: self.transparent_state.blind_size * 2,
-        }];
-
-        for &i in self.transparent_state.player_positions.iter() {
-            let c1 = deck.deal().expect("Deck should contain enough cards");
-            let c2 = deck.deal().expect("Deck should contain enough cards");
-            // note that we do not mirror the cards to the round state
-            state.push(Action::DealHand(i, [c1, c2]));
-            self.last_cards[i] = [c1, c2];
-            self.players[i].receive_cards(c1, c2);
-        }
-
-        self.transparent_state.apply_small_blind(&mut self.players);
-        self.transparent_state.apply_big_blind(&mut self.players);
-
-        let _ = self
-            .transparent_state
-            .apply_pre_flop_action(&mut self.players)
-            || {
-                let flop = [
-                    deck.deal().expect("Deck should contain enough cards"),
-                    deck.deal().expect("Deck should contain enough cards"),
-                    deck.deal().expect("Deck should contain enough cards"),
-                ];
-
-                self.transparent_state.deal_flop(flop);
-                self.transparent_state
-                    .apply_post_flop_action(&mut self.players)
-            }
-            || {
-                let turn = deck.deal().expect("Deck should contain enough cards");
-                self.transparent_state.deal_turn(turn);
-                self.transparent_state
-                    .apply_post_flop_action(&mut self.players)
-            }
-            || {
-                let river = deck.deal().expect("Deck should contain enough cards");
-                self.transparent_state.deal_river(river);
-                self.transparent_state
-                    .apply_post_flop_action(&mut self.players)
-            };
-
-        state.extend(self.transparent_state.actions.drain(..));
-
-        if self.transparent_state.num_players() == 1 {
-            // the player left gets the pot
-            let pos = *self.transparent_state.player_positions.first().unwrap();
-            let win = self
-                .transparent_state
-                .pot
-                .distribute(&self.transparent_state.player_positions)[pos];
-            state.push(Action::Win(pos, win));
-            self.transparent_state.player_stacks[pos] += win;
-        } else {
-            // Showdown
-            let mut ranked_hands = Vec::new();
-            for &i in self.transparent_state.player_positions.iter() {
-                ranked_hands.push((
-                    self.transparent_state.board.rank_hand(self.last_cards[i]),
-                    i,
-                ))
-            }
-            ranked_hands.sort_by_key(|x| std::cmp::Reverse(x.clone().0));
-
-            let mut i = 0;
-            while i < ranked_hands.len() {
-                let mut j = i + 1;
-                while j < ranked_hands.len() && ranked_hands[i].0 == ranked_hands[j].0 {
-                    j += 1;
-                }
-                let positions: Vec<_> = ranked_hands[i..j].iter().map(|(_, p)| *p).collect();
-                let won_amounts = self.transparent_state.pot.distribute(&positions);
-                for p in positions.into_iter() {
-                    let amount = won_amounts[p];
-                    state.push(Action::Win(p, amount));
-                    self.transparent_state.player_stacks[p] += amount;
-                }
-
-                if self.transparent_state.pot.is_empty() {
-                    break;
-                }
-
-                i = j;
-            }
-        }
-
-        state.push(Action::EndRound);
-        self.transparent_state.prepare_next_round();
-
-        state.into_iter()
+    pub fn play_one_round(&mut self, deck: impl Deck) -> Round<'_, P> {
+        Round::new(&mut self.players, &mut self.transparent_state, deck)
     }
 }
 
@@ -205,8 +327,7 @@ mod tests {
                 Action::Raise(0, 10),
                 Action::Fold(1),
                 Action::Fold(2),
-                Action::Win(0, 13),
-                Action::EndRound
+                Action::Win(vec![(0, 13)]),
             ]
         );
     }
@@ -249,8 +370,7 @@ mod tests {
             [
                 Action::Bet(2, 2),
                 Action::Fold(0),
-                Action::Win(2, 1 + 2 + 10 + 8 + 2),
-                Action::EndRound
+                Action::Win(vec![(2, 1 + 2 + 10 + 8 + 2)]),
             ]
         );
     }
@@ -308,8 +428,7 @@ mod tests {
             [
                 Action::Bet(1, 2),
                 Action::Fold(2),
-                Action::Win(1, 1 + 2 + 10 + 9 + 8 + 2 + 2 + 2),
-                Action::EndRound
+                Action::Win(vec![(1, 1 + 2 + 10 + 9 + 8 + 2 + 2 + 2)]),
             ]
         );
     }
@@ -350,8 +469,7 @@ mod tests {
                 Action::Bet(1, 2),
                 Action::Raise(2, 10),
                 Action::Fold(1),
-                Action::Win(2, 1 + 2 + 10 + 9 + 8 + 2 + 2 + 2 + 2 + 2 + 10),
-                Action::EndRound
+                Action::Win(vec![(2, 1 + 2 + 10 + 9 + 8 + 2 + 2 + 2 + 2 + 2 + 10)]),
             ]
         );
     }
@@ -397,8 +515,7 @@ mod tests {
                 Action::Bet(1, 2),
                 Action::Raise(2, 10),
                 Action::Call(1, 8),
-                Action::Win(2, 1 + 2 + 10 + 9 + 8 + 2 + 2 + 2 + 2 + 2 + 10 + 8),
-                Action::EndRound
+                Action::Win(vec![(2, 1 + 2 + 10 + 9 + 8 + 2 + 2 + 2 + 2 + 2 + 10 + 8)]),
             ]
         );
     }
@@ -497,9 +614,7 @@ mod tests {
                 Action::DealRiver(river),
                 Action::Check(2),
                 Action::Check(0),
-                Action::Win(3, 80 + 80 + 80),
-                Action::Win(0, 20),
-                Action::EndRound
+                Action::Win(vec![(3, 80 + 80 + 80), (0, 20)]),
             ]
         );
     }
@@ -526,7 +641,4 @@ mod tests {
         let _: Vec<_> = table.play_one_round(CardCollection::default()).collect();
         let _: Vec<_> = table.play_one_round(CardCollection::default()).collect();
     }
-
-    #[test]
-    fn test_play_round_id_is_unique() {}
 }
