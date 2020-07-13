@@ -19,12 +19,14 @@ mod player;
 mod pot;
 mod state;
 mod table;
+mod play;
 
 pub use board::Board;
 pub use player::Player;
 pub use pot::Pot;
-pub use state::TransparentState;
+pub use state::{TransparentState, CheckpointState};
 pub use table::{BlindPolicy, Table};
+pub use play::{Round, RoundCheckpoint};
 
 #[cfg(test)]
 mod tests {

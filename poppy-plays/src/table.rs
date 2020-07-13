@@ -1,7 +1,7 @@
-use crate::actions::Action;
-use crate::deck::{Card, Deck};
+use crate::deck::Deck;
 use crate::player::Player;
-use crate::state::{BetRoundState, TransparentState};
+use crate::state::{TransparentState, CheckpointState};
+use crate::play::{Round, RoundCheckpoint};
 use crate::ChipCount;
 
 /// Exposes variants to handle blind policies, i. e. control when and how much the blind size should be increased.
@@ -16,229 +16,6 @@ pub struct Table<P> {
     players: Vec<P>,
     blind_policy: BlindPolicy,
     transparent_state: TransparentState,
-}
-
-/// This enum represents the current stage of the round.
-/// It is used for the `Round` structure to hold state information
-enum RoundIteratorStage {
-    /// The round is about to start
-    Init,
-    /// The player at the given position is about to receive its cards
-    DealHand(usize),
-    /// The small blind is about to be placed.
-    /// Note that we will deal cards before the blinds.
-    SmallBlind,
-    /// The big blind is about to be placed.
-    /// Note that we will deal cards before the blinds.
-    BigBlind,
-    /// This represents the state after the blinds have been dealt.
-    /// Eventually it ends when either no player is remaining (skips ahead to distribute the pot and sets the stage to `PastEnd`) or
-    /// the flop is dealt, which progresses the state to `PostFlop`.
-    PostBlind(BetRoundState),
-    /// Analogous to `PostBlind`, this represents the state after the flop has been dealt.
-    PostFlop(BetRoundState),
-    /// Analogous to `PostBlind`, this represents the state after the turn has been dealt.
-    PostTurn(BetRoundState),
-    /// Analogous to `PostBlind`, this represents the state after the river has been dealt.
-    PostRiver(BetRoundState),
-    /// The past-end stage, indicating that this round is finished. This stage will loop indefinitely.
-    PastEnd,
-}
-
-/// Structure to wrap the `TransparentState` into an iterator.
-/// Each step taken by the iterator corresponds to one step taken in the round played.
-///
-/// This iterator object supports freezing and replay (fast-forward play).
-pub struct Round<'a, P> {
-    players: &'a mut Vec<P>,
-    transparent_state: &'a mut TransparentState,
-    next_cards: Vec<Card>,
-    iterator_stage: RoundIteratorStage,
-}
-
-impl<'a, P> Round<'a, P> {
-    fn new(
-        players: &'a mut Vec<P>,
-        transparent_state: &'a mut TransparentState,
-        mut deck: impl Deck,
-    ) -> Self {
-        transparent_state.prepare_hands(&mut deck);
-
-        // we pre-emptively "fill" the board in order to make serialization less heavy
-        let mut next_cards = Vec::with_capacity(5);
-        for _ in 0..5 {
-            next_cards.push(deck.deal().expect("Deck should contain enough cards"));
-        }
-        // we will want to preserve order, just for consistency reasons (since we will be popping from back to front)
-        next_cards.reverse();
-
-        Self {
-            players,
-            transparent_state,
-            next_cards,
-            iterator_stage: RoundIteratorStage::Init,
-        }
-    }
-
-    fn distribute_pot(&mut self) -> Action {
-        let action = if self.transparent_state.num_players() == 1 {
-            // the player left gets the pot
-            let pos = *self.transparent_state.player_positions.first().unwrap();
-            let win = self
-                .transparent_state
-                .pot
-                .distribute(&self.transparent_state.player_positions)[pos];
-            self.transparent_state.player_stacks[pos] += win;
-
-            Action::Win(vec![(pos, win)])
-        } else {
-            // prepare showdown
-            let mut ranked_hands = Vec::new();
-            for &i in self.transparent_state.player_positions.iter() {
-                ranked_hands.push((
-                    self.transparent_state
-                        .board
-                        .rank_hand(self.transparent_state.hands[i]),
-                    i,
-                ))
-            }
-            ranked_hands.sort_by_key(|x| x.0.clone());
-            let mut wins = Vec::new();
-
-            while let Some((rank, pos)) = ranked_hands.pop() {
-                let mut positions = vec![pos];
-                while !ranked_hands.is_empty() && ranked_hands.last().unwrap().0 == rank {
-                    positions.push(ranked_hands.pop().unwrap().1);
-                }
-
-                let won_amounts = self.transparent_state.pot.distribute(&positions);
-                for p in positions.into_iter() {
-                    let amount = won_amounts[p];
-                    wins.push((p, amount));
-                    self.transparent_state.player_stacks[p] += amount;
-                }
-
-                if self.transparent_state.pot.is_empty() {
-                    break;
-                }
-            }
-
-            Action::Win(wins)
-        };
-
-        self.transparent_state.end_round();
-        self.iterator_stage = RoundIteratorStage::PastEnd;
-
-        action
-    }
-}
-
-impl<'a, P: Player> Iterator for Round<'a, P> {
-    type Item = Action;
-
-    /// Progresses the state of the round one step ahead.
-    /// All actions taken so far are mirrored into the underlying `TransparentState`
-    fn next(&mut self) -> Option<Self::Item> {
-        match &mut self.iterator_stage {
-            RoundIteratorStage::Init => {
-                self.iterator_stage = RoundIteratorStage::DealHand(0);
-                Some(self.transparent_state.start_round())
-            }
-            RoundIteratorStage::DealHand(i) => {
-                let i = *i;
-                self.iterator_stage = if i + 1 >= self.transparent_state.num_players() {
-                    RoundIteratorStage::SmallBlind
-                } else {
-                    RoundIteratorStage::DealHand(i + 1)
-                };
-                Some(self.transparent_state.deal_hand(i))
-            }
-            RoundIteratorStage::SmallBlind => {
-                self.iterator_stage = RoundIteratorStage::BigBlind;
-                Some(self.transparent_state.apply_small_blind(&mut self.players))
-            }
-            RoundIteratorStage::BigBlind => {
-                self.iterator_stage =
-                    RoundIteratorStage::PostBlind(self.transparent_state.init_pre_flop_action());
-                Some(self.transparent_state.apply_big_blind(&mut self.players))
-            }
-            RoundIteratorStage::PostBlind(i) => {
-                while !i.done() {
-                    let action = self.transparent_state.step_bet_round(i, &mut self.players);
-                    if action.is_some() {
-                        return action;
-                    }
-                }
-
-                if self.transparent_state.num_players() == 1 {
-                    Some(self.distribute_pot())
-                } else {
-                    // deal flop
-                    self.iterator_stage = RoundIteratorStage::PostFlop(
-                        self.transparent_state.init_post_flop_action(),
-                    );
-                    Some(self.transparent_state.deal_flop([
-                        self.next_cards.pop().unwrap(),
-                        self.next_cards.pop().unwrap(),
-                        self.next_cards.pop().unwrap(),
-                    ]))
-                }
-            }
-            RoundIteratorStage::PostFlop(i) => {
-                while !i.done() {
-                    let action = self.transparent_state.step_bet_round(i, &mut self.players);
-                    if action.is_some() {
-                        return action;
-                    }
-                }
-
-                if self.transparent_state.num_players() == 1 {
-                    Some(self.distribute_pot())
-                } else {
-                    // deal turn
-                    self.iterator_stage = RoundIteratorStage::PostTurn(
-                        self.transparent_state.init_post_flop_action(),
-                    );
-                    Some(
-                        self.transparent_state
-                            .deal_turn(self.next_cards.pop().unwrap()),
-                    )
-                }
-            }
-            RoundIteratorStage::PostTurn(i) => {
-                while !i.done() {
-                    let action = self.transparent_state.step_bet_round(i, &mut self.players);
-                    if action.is_some() {
-                        return action;
-                    }
-                }
-
-                if self.transparent_state.num_players() == 1 {
-                    Some(self.distribute_pot())
-                } else {
-                    // deal river
-                    self.iterator_stage = RoundIteratorStage::PostRiver(
-                        self.transparent_state.init_post_flop_action(),
-                    );
-                    Some(
-                        self.transparent_state
-                            .deal_river(self.next_cards.pop().unwrap()),
-                    )
-                }
-            }
-            RoundIteratorStage::PostRiver(i) => {
-                while !i.done() {
-                    let action = self.transparent_state.step_bet_round(i, &mut self.players);
-                    if action.is_some() {
-                        return action;
-                    }
-                }
-
-                Some(self.distribute_pot())
-            }
-            RoundIteratorStage::PastEnd => None,
-        }
-    }
 }
 
 impl<P: Player> Table<P> {
@@ -276,8 +53,13 @@ impl<P: Player> Table<P> {
     /// Returns a `Round` structure which is essentially a fancy iterator.
     ///
     /// It is expected that the given deck is valid, i. e. contains all cards, is properly shuffled, etc.
-    pub fn play_one_round(&mut self, deck: impl Deck) -> Round<'_, P> {
+    pub fn play_one_round(&mut self, deck: impl Deck) -> Round<'_, P, &mut TransparentState> {
         Round::new(&mut self.players, &mut self.transparent_state, deck)
+    }
+
+    /// Replay the round recovered from the given state with the players currently seated at the table.
+    pub fn replay_one_round(&mut self, initial_state: RoundCheckpoint) -> Round<'_, P, CheckpointState> {
+        Round::from_checkpoint(&mut self.players, initial_state)
     }
 }
 
@@ -285,7 +67,7 @@ impl<P: Player> Table<P> {
 mod tests {
     use super::*;
     use crate::actions::{Action, PlayerAction};
-    use crate::deck::card::{Suit, Value};
+    use crate::deck::card::{Card, Suit, Value};
     use crate::deck::CardCollection;
     use crate::mock::MockPlayer;
     use std::convert::TryInto;

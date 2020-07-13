@@ -4,6 +4,7 @@ use crate::deck::{Card, Deck};
 use crate::player::Player;
 use crate::pot::Pot;
 use crate::ChipCount;
+use std::ops::{Deref, DerefMut};
 
 /// Structure to hold state information about one round of poker played which is visible to each player.
 #[derive(Debug, Clone)]
@@ -50,6 +51,12 @@ pub struct TransparentState {
     pub id: usize,
 }
 
+/// Convenience structure wrapping a `TransparentState` for replay purposes.
+#[derive(Debug, Clone)]
+pub struct CheckpointState {
+    state: TransparentState
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct BetRoundState {
     index_of_starting_position: usize,
@@ -61,6 +68,29 @@ pub(crate) struct BetRoundState {
 impl BetRoundState {
     pub(crate) fn done(&self) -> bool {
         self.done
+    }
+}
+
+impl CheckpointState {
+    pub(crate) fn new(state: TransparentState) -> Self {
+        Self {
+            state
+        }
+    }
+}
+
+impl Deref for CheckpointState {
+    type Target = TransparentState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
+impl DerefMut for CheckpointState {
+
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.state
     }
 }
 
@@ -235,9 +265,57 @@ impl TransparentState {
         self.mirrored_action(Action::DealRiver(card))
     }
 
-    /// Ends the currently played round.
+    pub(crate) fn end_round(&mut self) -> Action {
+        let action = if self.num_players() == 1 {
+            // the player left gets the pot
+            let pos = *self.player_positions.first().unwrap();
+            let win = self
+                .pot
+                .distribute(&self.player_positions)[pos];
+            self.player_stacks[pos] += win;
+
+            Action::Win(vec![(pos, win)])
+        } else {
+            // prepare showdown
+            let mut ranked_hands = Vec::new();
+            for &i in self.player_positions.iter() {
+                ranked_hands.push((
+                    self
+                        .board
+                        .rank_hand(self.hands[i]),
+                    i,
+                ))
+            }
+            ranked_hands.sort_by_key(|x| x.0.clone());
+            let mut wins = Vec::new();
+
+            while let Some((rank, pos)) = ranked_hands.pop() {
+                let mut positions = vec![pos];
+                while !ranked_hands.is_empty() && ranked_hands.last().unwrap().0 == rank {
+                    positions.push(ranked_hands.pop().unwrap().1);
+                }
+
+                let won_amounts = self.pot.distribute(&positions);
+                for p in positions.into_iter() {
+                    let amount = won_amounts[p];
+                    wins.push((p, amount));
+                    self.player_stacks[p] += amount;
+                }
+
+                if self.pot.is_empty() {
+                    break;
+                }
+            }
+
+            Action::Win(wins)
+        };
+
+        self.reset_state();
+        action
+    }
+
     /// Resets all internal state and advances the dealer position.
-    pub(crate) fn end_round(&mut self) {
+    fn reset_state(&mut self) {
         self.board.clear();
         self.actions.clear();
         self.pot.reset();
