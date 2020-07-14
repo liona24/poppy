@@ -126,7 +126,7 @@ pub trait Rankable {
     /// # Examples
     /// ```
     /// use std::convert::TryInto;
-    /// use poppy_plays::deck::{CardCollection, Rank, Rankable};
+    /// use poppy::deck::{CardCollection, Rank, Rankable};
     ///
     /// let hand : CardCollection = "2h2d8d8sKd6sTh".try_into().unwrap();
     /// let rank = hand.rank();

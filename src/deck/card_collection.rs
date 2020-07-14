@@ -70,7 +70,7 @@ impl TryFrom<&str> for CardCollection {
     ///
     /// ```
     /// use std::convert::TryInto;
-    /// use poppy_plays::deck::CardCollection;
+    /// use poppy::deck::CardCollection;
     /// let hand : Result<CardCollection, _> = "AdKd".try_into();
     /// assert!(hand.is_ok());
     /// ```
@@ -79,7 +79,7 @@ impl TryFrom<&str> for CardCollection {
     ///
     /// ```
     /// use std::convert::TryInto;
-    /// use poppy_plays::deck::CardCollection;
+    /// use poppy::deck::CardCollection;
     /// let hand : Result<CardCollection, _> = "AdKx".try_into();
     /// assert!(hand.is_err());
     /// ```

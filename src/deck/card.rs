@@ -86,7 +86,7 @@ impl Value {
     /// # Examples
     ///
     /// ```
-    /// use poppy_plays::deck::card::Value;
+    /// use poppy::deck::card::Value;
     /// assert_eq!(Value::Ace, Value::from_char('A').unwrap());
     /// ```
     pub fn from_char(c: char) -> Option<Self> {
@@ -132,7 +132,7 @@ impl Value {
     /// # Examples
     ///
     /// ```
-    /// use poppy_plays::deck::card::Value;
+    /// use poppy::deck::card::Value;
     /// assert_eq!(1, Value::Ace.gap(Value::King));
     /// ```
     pub fn gap(self, other: Self) -> u8 {
@@ -175,13 +175,13 @@ impl Suit {
     /// # Examples
     ///
     /// ```
-    /// use poppy_plays::deck::card::Suit;
+    /// use poppy::deck::card::Suit;
     /// let s = Suit::from_char('s');
     /// assert_eq!(Some(Suit::Spade), s);
     /// ```
     ///
     /// ```
-    /// use poppy_plays::deck::card::Suit;
+    /// use poppy::deck::card::Suit;
     /// let s = Suit::from_char('X');
     /// assert_eq!(None, s);
     /// ```
