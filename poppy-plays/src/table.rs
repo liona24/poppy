@@ -1,7 +1,7 @@
 use crate::deck::Deck;
-use crate::player::Player;
-use crate::state::{TransparentState, CheckpointState};
 use crate::play::{Round, RoundCheckpoint};
+use crate::player::Player;
+use crate::state::{CheckpointState, TransparentState};
 use crate::ChipCount;
 
 /// Exposes variants to handle blind policies, i. e. control when and how much the blind size should be increased.
@@ -40,11 +40,12 @@ impl<P: Player> Table<P> {
         assert!(players.len() > 1);
 
         let stack_sizes = vec![stack_size; players.len()];
+        let dealer_position = players.len() - 1;
 
         Self {
             players,
             blind_policy,
-            transparent_state: TransparentState::new(blind_size, 0, stack_sizes),
+            transparent_state: TransparentState::new(blind_size, dealer_position, stack_sizes),
         }
     }
 
@@ -58,7 +59,10 @@ impl<P: Player> Table<P> {
     }
 
     /// Replay the round recovered from the given state with the players currently seated at the table.
-    pub fn replay_one_round(&mut self, initial_state: RoundCheckpoint) -> Round<'_, P, CheckpointState> {
+    pub fn replay_one_round(
+        &mut self,
+        initial_state: RoundCheckpoint,
+    ) -> Round<'_, P, CheckpointState> {
         Round::from_checkpoint(&mut self.players, initial_state)
     }
 }

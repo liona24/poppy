@@ -54,7 +54,7 @@ pub struct TransparentState {
 /// Convenience structure wrapping a `TransparentState` for replay purposes.
 #[derive(Debug, Clone)]
 pub struct CheckpointState {
-    state: TransparentState
+    state: TransparentState,
 }
 
 #[derive(Debug, Clone)]
@@ -73,9 +73,7 @@ impl BetRoundState {
 
 impl CheckpointState {
     pub(crate) fn new(state: TransparentState) -> Self {
-        Self {
-            state
-        }
+        Self { state }
     }
 }
 
@@ -88,7 +86,6 @@ impl Deref for CheckpointState {
 }
 
 impl DerefMut for CheckpointState {
-
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.state
     }
@@ -145,13 +142,25 @@ impl TransparentState {
         self.hands[player_position]
     }
 
+    /// Resets the internal state, progresses the dealer position and prepares the next round
+    pub(crate) fn reset(&mut self) {
+        self.dealer_position = (self.dealer_position + 1) % self.num_players_total();
+        self.board.clear();
+        self.actions.clear();
+        self.pot.reset();
+        self.player_positions =
+            generate_player_positions(self.dealer_position, self.num_players_total());
+        self.actions.clear();
+        self.id += 1;
+    }
+
     /// Deals the prepared hand to the player with the given id
     pub(crate) fn deal_hand(&mut self, i: usize) -> Action {
         let pos = self.player_positions[i];
         self.mirrored_action(Action::DealHand(pos, self.hands[pos]))
     }
 
-    /// Initializes this state for the next round
+    /// Emits an `Action::StartRound`
     pub(crate) fn start_round(&mut self) -> Action {
         self.mirrored_action(Action::StartRound {
             id: self.id,
@@ -266,12 +275,10 @@ impl TransparentState {
     }
 
     pub(crate) fn end_round(&mut self) -> Action {
-        let action = if self.num_players() == 1 {
+        if self.num_players() == 1 {
             // the player left gets the pot
             let pos = *self.player_positions.first().unwrap();
-            let win = self
-                .pot
-                .distribute(&self.player_positions)[pos];
+            let win = self.pot.distribute(&self.player_positions)[pos];
             self.player_stacks[pos] += win;
 
             Action::Win(vec![(pos, win)])
@@ -279,12 +286,7 @@ impl TransparentState {
             // prepare showdown
             let mut ranked_hands = Vec::new();
             for &i in self.player_positions.iter() {
-                ranked_hands.push((
-                    self
-                        .board
-                        .rank_hand(self.hands[i]),
-                    i,
-                ))
+                ranked_hands.push((self.board.rank_hand(self.hands[i]), i))
             }
             ranked_hands.sort_by_key(|x| x.0.clone());
             let mut wins = Vec::new();
@@ -308,22 +310,7 @@ impl TransparentState {
             }
 
             Action::Win(wins)
-        };
-
-        self.reset_state();
-        action
-    }
-
-    /// Resets all internal state and advances the dealer position.
-    fn reset_state(&mut self) {
-        self.board.clear();
-        self.actions.clear();
-        self.pot.reset();
-        self.dealer_position = (self.dealer_position + 1) % self.num_players_total();
-        self.player_positions =
-            generate_player_positions(self.dealer_position, self.num_players_total());
-        self.actions.clear();
-        self.id += 1;
+        }
     }
 
     /// Forces the player at `position` to set a blind of the specified size.
@@ -924,6 +911,7 @@ mod tests {
         }
 
         state.end_round();
+        state.reset();
 
         assert!(state.actions.is_empty());
         assert_eq!(state.pot.total_size(), 0);

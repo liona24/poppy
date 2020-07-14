@@ -15,18 +15,18 @@ mod mock;
 pub mod actions;
 mod board;
 pub mod deck;
+mod play;
 mod player;
 mod pot;
 mod state;
 mod table;
-mod play;
 
 pub use board::Board;
+pub use play::{Round, RoundCheckpoint};
 pub use player::Player;
 pub use pot::Pot;
-pub use state::{TransparentState, CheckpointState};
+pub use state::{CheckpointState, TransparentState};
 pub use table::{BlindPolicy, Table};
-pub use play::{Round, RoundCheckpoint};
 
 #[cfg(test)]
 mod tests {

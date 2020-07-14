@@ -1,7 +1,7 @@
 use crate::actions::Action;
 use crate::deck::{Card, Deck};
 use crate::player::Player;
-use crate::state::{BetRoundState, TransparentState, CheckpointState};
+use crate::state::{BetRoundState, CheckpointState, TransparentState};
 use std::ops::DerefMut;
 
 /// This enum represents the current stage of the round.
@@ -54,11 +54,8 @@ pub struct RoundCheckpoint {
 }
 
 impl<'a, P: Player, T: DerefMut<Target = TransparentState>> Round<'a, P, T> {
-    pub(crate) fn new(
-        players: &'a mut [P],
-        mut transparent_state: T,
-        mut deck: impl Deck,
-    ) -> Self {
+    pub(crate) fn new(players: &'a mut [P], mut transparent_state: T, mut deck: impl Deck) -> Self {
+        transparent_state.reset();
         transparent_state.prepare_hands(&mut deck);
 
         // we pre-emptively "fill" the board in order to make serialization less heavy
@@ -98,7 +95,7 @@ impl<'a, P: Player> Round<'a, P, CheckpointState> {
             players,
             transparent_state: CheckpointState::new(cp.transparent_state),
             next_cards: cp.next_cards,
-            iterator_stage: cp.iterator_stage
+            iterator_stage: cp.iterator_stage,
         }
     }
 }
