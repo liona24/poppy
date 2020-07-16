@@ -1,5 +1,10 @@
 # poppy
 
+[![Build Status](https://dev.azure.com/ackermlion/poppy/_apis/build/status/liona24.poppy?branchName=master)](https://dev.azure.com/ackermlion/poppy/_build/latest?definitionId=3&branchName=master)
+[![codecov](https://codecov.io/gh/liona24/poppy/branch/master/graph/badge.svg)](https://codecov.io/gh/liona24/poppy)
+
+## Introduction
+
 This is a simple library which can be used to implement no-limit Texas Hold'em poker gameplay in rust.
 Originally built on top of [rs_poker](https://crates.io/crates/rs-poker) the projects diverged quite a lot eventually resulting in a stand-alone library.
 There are no dependencies required, though adding serialization support is planned (as a feature).
