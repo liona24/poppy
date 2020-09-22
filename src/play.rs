@@ -83,6 +83,11 @@ impl<'a, P: Player, T: DerefMut<Target = TransparentState>> Round<'a, P, T> {
         }
     }
 
+    /// Inspect the underlying `TransparentState` before stepping to the next action.
+    pub fn inspect_state(&self) -> &'_ TransparentState {
+        &*self.transparent_state
+    }
+
     fn end_round(&mut self) -> Action {
         self.iterator_stage = RoundIteratorStage::PastEnd;
         self.transparent_state.end_round()

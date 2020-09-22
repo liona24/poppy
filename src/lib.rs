@@ -55,9 +55,9 @@
 //!     // You can shuffle decks as you want to.
 //!     // We will use a default un-sorted deck here.
 //!     let deck = deck::CardCollection::default();
-//!     let round_iter = table.play_one_round(deck);
+//!     let mut round_iter = table.play_one_round(deck);
 //!
-//!     for action_taken in round_iter {
+//!     for action_taken in &mut round_iter {
 //!         println!("{:?}", action_taken);
 //!     }
 //! }
